@@ -34,6 +34,12 @@
 #include <event.h>
 #include <imsg.h>
 
+#ifdef __linux__
+#include <grp.h>
+#endif
+
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 
 void	 proc_exec(struct privsep *, struct privsep_proc *, unsigned int, int,

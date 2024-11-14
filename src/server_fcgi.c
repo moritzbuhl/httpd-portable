@@ -34,6 +34,8 @@
 #include <event.h>
 #include <unistd.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 #include "http.h"
 
@@ -105,7 +107,7 @@ server_fcgi(struct httpd *env, struct client *clt)
 	    SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1)
 		goto fail;
 	if ((connect(fd, (struct sockaddr *) &srv_conf->fastcgi_ss,
-	    srv_conf->fastcgi_ss.ss_len)) == -1) {
+	    SS_LEN((&srv_conf->fastcgi_ss)))) == -1) {
 		if (errno != EINPROGRESS)
 			goto fail;
 	}

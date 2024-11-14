@@ -42,6 +42,8 @@
 #include <tls.h>
 #include <vis.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 
 #define MINIMUM(a, b)	(((a) < (b)) ? (a) : (b))
@@ -69,9 +71,36 @@ void		 server_accept(int, short, void *);
 void		 server_input(struct client *);
 void		 server_inflight_dec(struct client *, const char *);
 
+#ifdef __OpenBSD__
 extern void	 bufferevent_read_pressure_cb(struct evbuffer *, size_t,
 		    size_t, void *);
+#else
+void bufferevent_read_pressure_cb(struct evbuffer *, size_t, size_t, void *);
+static int bufferevent_add(struct event *, struct timeval);
 
+static int
+bufferevent_add(struct event *ev, struct timeval tv)
+{
+        struct timeval *ptv = &tv;
+        return (event_add(ev, ptv));
+}
+
+void
+bufferevent_read_pressure_cb(struct evbuffer *buf, size_t old, size_t now,
+    void *arg) {
+        struct bufferevent *bufev = arg;
+        /*
+         * If we are below the watermark then reschedule reading if it's
+         * still enabled.
+         */
+        if (bufev->wm_read.high == 0 || now < bufev->wm_read.high) {
+                evbuffer_setcb(buf, NULL, NULL);
+
+                if (bufev->enabled & EV_READ)
+                        bufferevent_add(&bufev->ev_read, bufev->timeout_read);
+        }
+}
+#endif
 volatile int server_clients;
 volatile int server_inflight = 0;
 uint32_t server_cltid;
@@ -602,13 +631,17 @@ server_socket_af(struct sockaddr_storage *ss, in_port_t port)
 	switch (ss->ss_family) {
 	case AF_INET:
 		((struct sockaddr_in *)ss)->sin_port = port;
+#ifdef HAVE_SOCKADDR_SA_LEN
 		((struct sockaddr_in *)ss)->sin_len =
 		    sizeof(struct sockaddr_in);
+#endif
 		break;
 	case AF_INET6:
 		((struct sockaddr_in6 *)ss)->sin6_port = port;
+#ifdef HAVE_SOCKADDR_SA_LEN
 		((struct sockaddr_in6 *)ss)->sin6_len =
 		    sizeof(struct sockaddr_in6);
+#endif
 		break;
 	default:
 		return (-1);
@@ -717,6 +750,7 @@ server_socket(struct sockaddr_storage *ss, in_port_t port,
 		    &val, sizeof(val)) == -1)
 			goto bad;
 	}
+#ifdef HAVE_TCP_SACK_ENABLE
 	if (srv_conf->tcpflags & (TCPFLAG_SACK|TCPFLAG_NSACK)) {
 		if (srv_conf->tcpflags & TCPFLAG_NSACK)
 			val = 0;
@@ -726,6 +760,7 @@ server_socket(struct sockaddr_storage *ss, in_port_t port,
 		    &val, sizeof(val)) == -1)
 			goto bad;
 	}
+#endif
 
 	return (s);
 
@@ -744,7 +779,7 @@ server_socket_listen(struct sockaddr_storage *ss, in_port_t port,
 	if ((s = server_socket(ss, port, srv_conf, -1, 1)) == -1)
 		return (-1);
 
-	if (bind(s, (struct sockaddr *)ss, ss->ss_len) == -1)
+	if (bind(s, (struct sockaddr *)ss, SS_LEN(ss)) == -1)
 		goto bad;
 	if (listen(s, srv_conf->tcpbacklog) == -1)
 		goto bad;
@@ -765,7 +800,7 @@ server_socket_connect(struct sockaddr_storage *ss, in_port_t port,
 	if ((s = server_socket(ss, port, srv_conf, -1, 0)) == -1)
 		return (-1);
 
-	if (connect(s, (struct sockaddr *)ss, ss->ss_len) == -1) {
+	if (connect(s, (struct sockaddr *)ss, SS_LEN(ss)) == -1) {
 		if (errno != EINPROGRESS)
 			goto bad;
 	}
@@ -810,10 +845,16 @@ server_tls_readcb(int fd, short event, void *arg)
 		goto err;
 	}
 
+#ifdef HAVE_LIBEVENT2
+	evbuffer_unfreeze(bufev->input, 0);
+#endif
 	if (evbuffer_add(bufev->input, rbuf, len) == -1) {
 		what |= EVBUFFER_ERROR;
 		goto err;
 	}
+#ifdef HAVE_LIBEVENT2
+	evbuffer_freeze(bufev->input, 0);
+#endif
 
 	server_bufferevent_add(&bufev->ev_read, bufev->timeout_read);
 
@@ -868,7 +909,15 @@ server_tls_writecb(int fd, short event, void *arg)
 	}
 
 	if (EVBUFFER_LENGTH(bufev->output) != 0)
+#ifdef HAVE_LIBEVENT2
+	    {
+		evbuffer_unfreeze(bufev->output, 1);
+#endif
 		server_bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+#ifdef HAVE_LIBEVENT2
+		evbuffer_freeze(bufev->output, 1);
+	}
+#endif
 
 	if (bufev->writecb != NULL &&
 	    EVBUFFER_LENGTH(bufev->output) <= bufev->wm_write.low)
@@ -1407,6 +1456,12 @@ server_dispatch_logger(int fd, struct privsep_proc *p, struct imsg *imsg)
 }
 
 int
+#ifdef HAVE_LIBEVENT2
+server_bufferevent_add(struct event *ev, struct timeval tv)
+{
+	struct timeval *ptv = NULL;
+	ptv = &tv;
+#else
 server_bufferevent_add(struct event *ev, int timeout)
 {
 	struct timeval tv, *ptv = NULL;
@@ -1416,6 +1471,7 @@ server_bufferevent_add(struct event *ev, int timeout)
 		tv.tv_sec = timeout;
 		ptv = &tv;
 	}
+#endif
 
 	return (event_add(ev, ptv));
 }

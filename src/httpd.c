@@ -41,6 +41,8 @@
 #include <ctype.h>
 #include <pwd.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 
 #define MAXIMUM(a, b)	(((a) > (b)) ? (a) : (b))
@@ -1206,7 +1208,7 @@ auth_free(struct serverauth *serverauth, struct auth *auth)
 const char *
 print_host(struct sockaddr_storage *ss, char *buf, size_t len)
 {
-	if (getnameinfo((struct sockaddr *)ss, ss->ss_len,
+	if (getnameinfo((struct sockaddr *)ss, SS_LEN(ss),
 	    buf, len, NULL, 0, NI_NUMERICHOST) != 0) {
 		buf[0] = '\0';
 		return (NULL);

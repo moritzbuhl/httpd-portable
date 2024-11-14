@@ -652,7 +652,11 @@ int	 server_bufferevent_write_buffer(struct client *,
 	    struct evbuffer *);
 int	 server_bufferevent_write_chunk(struct client *,
 	    struct evbuffer *, size_t);
+#ifdef HAVE_LIBEVENT2
+int	 server_bufferevent_add(struct event *, struct timeval);
+#else
 int	 server_bufferevent_add(struct event *, int);
+#endif
 int	 server_bufferevent_write(struct client *, void *, size_t);
 struct server *
 	 server_byaddr(struct sockaddr *, in_port_t);

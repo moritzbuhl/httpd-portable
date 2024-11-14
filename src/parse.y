@@ -33,7 +33,9 @@
 #include <sys/queue.h>
 #include <sys/tree.h>
 #include <sys/ioctl.h>
+#ifndef __linux__
 #include <sys/sockio.h>
+#endif
 #include <sys/time.h>
 
 #include <net/if.h>
@@ -52,6 +54,8 @@
 #include <string.h>
 #include <ifaddrs.h>
 #include <syslog.h>
+
+#include "openbsd-compat.h"
 
 #include "httpd.h"
 #include "http.h"
@@ -117,7 +121,9 @@ struct server	*server_inherit(struct server *, struct server_config *,
 		    struct server_config *);
 int		 listen_on(const char *, int, struct portrange *);
 int		 getservice(char *);
+#ifdef __OpenBSD__
 int		 is_if_in_group(const char *, const char *);
+#endif
 int		 get_fastcgi_dest(struct server_config *, const char *, char *);
 void		 remove_locations(struct server_config *);
 
@@ -296,7 +302,9 @@ server		: SERVER optmatch STRING	{
 			sun->sun_family = AF_UNIX;
 			(void)strlcpy(sun->sun_path, HTTPD_FCGI_SOCKET,
 			    sizeof(sun->sun_path));
+#ifdef HAVE_SOCKADDR_SA_LEN
 			sun->sun_len = sizeof(struct sockaddr_un);
+#endif
 
 			s->srv_conf.hsts_max_age = SERVER_HSTS_DEFAULT_AGE;
 
@@ -601,7 +609,9 @@ serveroptsl	: LISTEN ON STRING opttls port	{
 			sun->sun_family = AF_UNIX;
 			(void)strlcpy(sun->sun_path, HTTPD_FCGI_SOCKET,
 			    sizeof(sun->sun_path));
+#ifdef HAVE_SOCKADDR_SA_LEN
 			sun->sun_len = sizeof(struct sockaddr_un);
+#endif
 
 			s->srv_conf.id = ++last_server_id;
 			/* A location entry uses the parent id */
@@ -749,8 +759,10 @@ fcgiflags	: SOCKET STRING {
 				free($2);
 				YYERROR;
 			}
+#ifdef HAVE_SOCKADDR_SA_LEN
 			srv_conf->fastcgi_ss.ss_len =
 			    sizeof(struct sockaddr_un);
+#endif
 			free($2);
 		}
 		| SOCKET TCP STRING {
@@ -2046,7 +2058,9 @@ host_v4(const char *s)
 	if ((h = calloc(1, sizeof(*h))) == NULL)
 		fatal(__func__);
 	sain = (struct sockaddr_in *)&h->ss;
+#ifdef HAVE_SOCKADDR_SA_LEN
 	sain->sin_len = sizeof(struct sockaddr_in);
+#endif
 	sain->sin_family = AF_INET;
 	sain->sin_addr.s_addr = ina.s_addr;
 	if (sain->sin_addr.s_addr == INADDR_ANY)
@@ -2071,7 +2085,9 @@ host_v6(const char *s)
 		if ((h = calloc(1, sizeof(*h))) == NULL)
 			fatal(__func__);
 		sa_in6 = (struct sockaddr_in6 *)&h->ss;
+#ifdef HAVE_SOCKADDR_SA_LEN
 		sa_in6->sin6_len = sizeof(struct sockaddr_in6);
+#endif
 		sa_in6->sin6_family = AF_INET6;
 		memcpy(&sa_in6->sin6_addr,
 		    &((struct sockaddr_in6 *)res->ai_addr)->sin6_addr,
@@ -2140,12 +2156,16 @@ host_dns(const char *s, struct addresslist *al, int max,
 
 		if (res->ai_family == AF_INET) {
 			sain = (struct sockaddr_in *)&h->ss;
+#ifdef HAVE_SOCKADDR_SA_LEN
 			sain->sin_len = sizeof(struct sockaddr_in);
+#endif
 			sain->sin_addr.s_addr = ((struct sockaddr_in *)
 			    res->ai_addr)->sin_addr.s_addr;
 		} else {
 			sin6 = (struct sockaddr_in6 *)&h->ss;
+#ifdef HAVE_SOCKADDR_SA_LEN
 			sin6->sin6_len = sizeof(struct sockaddr_in6);
+#endif
 			memcpy(&sin6->sin6_addr, &((struct sockaddr_in6 *)
 			    res->ai_addr)->sin6_addr, sizeof(struct in6_addr));
 		}
@@ -2182,7 +2202,11 @@ host_if(const char *s, struct addresslist *al, int max,
 		if (p->ifa_addr == NULL ||
 		    p->ifa_addr->sa_family != af ||
 		    (strcmp(s, p->ifa_name) != 0 &&
+#ifdef __OpenBSD__
 		    !is_if_in_group(p->ifa_name, s)))
+#else
+		    1))
+#endif
 			continue;
 		if ((h = calloc(1, sizeof(*h))) == NULL)
 			fatal("calloc");
@@ -2205,12 +2229,16 @@ host_if(const char *s, struct addresslist *al, int max,
 
 		if (af == AF_INET) {
 			sain = (struct sockaddr_in *)&h->ss;
+#ifdef HAVE_SOCKADDR_SA_LEN
 			sain->sin_len = sizeof(struct sockaddr_in);
+#endif
 			sain->sin_addr.s_addr = ((struct sockaddr_in *)
 			    p->ifa_addr)->sin_addr.s_addr;
 		} else {
 			sin6 = (struct sockaddr_in6 *)&h->ss;
+#ifdef HAVE_SOCKADDR_SA_LEN
 			sin6->sin6_len = sizeof(struct sockaddr_in6);
+#endif
 			memcpy(&sin6->sin6_addr, &((struct sockaddr_in6 *)
 			    p->ifa_addr)->sin6_addr, sizeof(struct in6_addr));
 			sin6->sin6_scope_id = ((struct sockaddr_in6 *)
@@ -2480,6 +2508,7 @@ getservice(char *n)
 	return (htons((unsigned short)llval));
 }
 
+#ifdef __OpenBSD__
 int
 is_if_in_group(const char *ifname, const char *groupname)
 {
@@ -2523,6 +2552,7 @@ end:
 	close(s);
 	return (ret);
 }
+#endif
 
 int
 get_fastcgi_dest(struct server_config *xsrv_conf, const char *node, char *port)

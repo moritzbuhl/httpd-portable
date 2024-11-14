@@ -40,6 +40,8 @@
 #include <vis.h>
 #include <fcntl.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 #include "http.h"
 #include "patterns.h"
