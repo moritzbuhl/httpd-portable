@@ -28,6 +28,8 @@
 #include <fcntl.h>
 #include <imsg.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 
 int		 logger_dispatch_parent(int, struct privsep_proc *,

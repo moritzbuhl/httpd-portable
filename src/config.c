@@ -30,6 +30,8 @@
 #include <string.h>
 #include <imsg.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 
 int	 config_getserver_config(struct httpd *, struct server *,

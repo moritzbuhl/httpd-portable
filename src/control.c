@@ -30,6 +30,8 @@
 #include <unistd.h>
 #include <imsg.h>
 
+#include "openbsd-compat.h"
+
 #include "httpd.h"
 
 #define	CONTROL_BACKLOG	5

@@ -30,7 +30,13 @@
 #include <dirent.h>
 #include <time.h>
 #include <event.h>
+#ifdef __linux__
+#include "util.h"
+#else
 #include <util.h>
+#endif
+
+#include "openbsd-compat.h"
 
 #include "httpd.h"
 #include "http.h"
