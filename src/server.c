@@ -845,10 +845,16 @@ server_tls_readcb(int fd, short event, void *arg)
 		goto err;
 	}
 
+#ifdef LIBEVENT_VERSION_NUMBER
+	evbuffer_unfreeze(bufev->input, 0);
+#endif
 	if (evbuffer_add(bufev->input, rbuf, len) == -1) {
 		what |= EVBUFFER_ERROR;
 		goto err;
 	}
+#ifdef LIBEVENT_VERSION_NUMBER
+	evbuffer_freeze(bufev->input, 0);
+#endif
 
 	server_bufferevent_add(&bufev->ev_read, bufev->timeout_read);
 
@@ -903,7 +909,15 @@ server_tls_writecb(int fd, short event, void *arg)
 	}
 
 	if (EVBUFFER_LENGTH(bufev->output) != 0)
+#ifdef LIBEVENT_VERSION_NUMBER
+	    {
+		evbuffer_unfreeze(bufev->output, 1);
+#endif
 		server_bufferevent_add(&bufev->ev_write, bufev->timeout_write);
+#ifdef LIBEVENT_VERSION_NUMBER
+		evbuffer_freeze(bufev->output, 1);
+	}
+#endif
 
 	if (bufev->writecb != NULL &&
 	    EVBUFFER_LENGTH(bufev->output) <= bufev->wm_write.low)
