@@ -78,11 +78,16 @@ list(APPEND LIBS
 	event
 	crypto
 	ssl
-	compat
-	resolv
 	tls
-	crypt
+	compat
 )
+
+if(CMAKE_SYSTEM_NAME MATCHES "Linux")
+	list(APPEND LIBS
+		resolv
+		crypt
+	)
+endif()
 
 target_link_libraries(httpd
 	PRIVATE ${LIBS}

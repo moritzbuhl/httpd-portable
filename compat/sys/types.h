@@ -13,8 +13,8 @@
 #include_next <sys/types.h>
 #endif
 
-#ifndef IKED_COMPAT_SYS_TYPES_H
-#define IKED_COMPAT_SYS_TYPES_H
+#ifndef HTTPD_COMPAT_SYS_TYPES_H
+#define HTTPD_COMPAT_SYS_TYPES_H
 
 #include <stdint.h>
 

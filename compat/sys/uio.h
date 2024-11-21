@@ -7,8 +7,8 @@
 #include_next <sys/uio.h>
 #else
 
-#ifndef IKED_COMPAT_SYS_UIO_H
-#define IKED_COMPAT_SYS_UIO_H
+#ifndef HTTPD_COMPAT_SYS_UIO_H
+#define HTTPD_COMPAT_SYS_UIO_H
 
 #define	IOV_MAX	16	/* XXX */
 
@@ -19,6 +19,6 @@ struct iovec {
 
 /* needs to be converted to WSABUF with buf/len attributes */
 
-#endif /* !IKED_COMPAT_SYS_UIO_H */
+#endif /* !HTTPD_COMPAT_SYS_UIO_H */
 
 #endif

@@ -5,12 +5,12 @@
 
 #if defined _MSC_VER
 
-#ifndef IKED_COMPAT_SYS_SYSCTL_H
-#define IKED_COMPAT_SYS_SYSCTL_H
+#ifndef HTTPD_COMPAT_SYS_SYSCTL_H
+#define HTTPD_COMPAT_SYS_SYSCTL_H
 
 /* XXX */
 
-#endif /* !IKED_COMPAT_SYS_SYSCTL_H */
+#endif /* !HTTPD_COMPAT_SYS_SYSCTL_H */
 
 #elif defined __linux__
 #include <linux/sysctl.h>

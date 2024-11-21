@@ -33,8 +33,8 @@
 #include_next <netinet/if_ether.h>
 #else
 
-#ifndef IKED_COMPAT_NETINET_IF_ETHER_H
-#define IKED_COMPAT_NETINET_IF_ETHER_H
+#ifndef HTTPD_COMPAT_NETINET_IF_ETHER_H
+#define HTTPD_COMPAT_NETINET_IF_ETHER_H
 
 
 /*
@@ -114,6 +114,6 @@ struct	ether_arp {
 #define	arp_pln	ea_hdr.ar_pln
 #define	arp_op	ea_hdr.ar_op
 
-#endif /* !IKED_COMPAT_NETINET_IF_ETHER_H */
+#endif /* !HTTPD_COMPAT_NETINET_IF_ETHER_H */
 
 #endif

@@ -3,8 +3,8 @@
  * endian.h compatibility shim
  */
 
-#ifndef IKED_COMPAT_ENDIAN_H
-#define IKED_COMPAT_ENDIAN_H
+#ifndef HTTPD_COMPAT_ENDIAN_H
+#define HTTPD_COMPAT_ENDIAN_H
 
 #ifdef HAVE_ENDIAN_H
 #include_next <endian.h>
@@ -77,4 +77,4 @@
 #endif
 #endif
 
-#endif /* IKED_COMPAT_ENDIAN_H */
+#endif /* HTTPD_COMPAT_ENDIAN_H */

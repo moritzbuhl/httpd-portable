@@ -65,8 +65,8 @@
 #include_next <netinet/ip6.h>
 #else
 
-#ifndef IKED_COMPAT_NETINET_IP6_H
-#define IKED_COMPAT_NETINET_IP6_H
+#ifndef HTTPD_COMPAT_NETINET_IP6_H
+#define HTTPD_COMPAT_NETINET_IP6_H
 
 #ifndef __packed
 #define __packed        __attribute__((__packed__))
@@ -101,7 +101,7 @@ struct ip6_hdr {
 #define IPV6_VERSION		0x60
 #define IPV6_VERSION_MASK	0xf0
 
-#endif /* !IKED_COMPAT_NETINET_IP6_H */
+#endif /* !HTTPD_COMPAT_NETINET_IP6_H */
 
 #endif
 

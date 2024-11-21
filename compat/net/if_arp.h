@@ -33,8 +33,8 @@
 #include_next <net/if_arp.h>
 #else
 
-#ifndef IKED_COMPAT_SYS_WAIT_H
-#define IKED_COMPAT_SYS_WAIT_H
+#ifndef HTTPD_COMPAT_SYS_WAIT_H
+#define HTTPD_COMPAT_SYS_WAIT_H
 
 /*
  * Address Resolution Protocol.
@@ -74,6 +74,6 @@ struct	arphdr {
 #endif
 };
 
-#endif /* !IKED_COMPAT_SYS_WAIT_H */
+#endif /* !HTTPD_COMPAT_SYS_WAIT_H */
 
 #endif

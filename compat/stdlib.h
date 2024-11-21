@@ -13,8 +13,8 @@
 #include_next <stdlib.h>
 #endif
 
-#ifndef IKED_COMPAT_STDLIB_H
-#define IKED_COMPAT_STDLIB_H
+#ifndef HTTPD_COMPAT_STDLIB_H
+#define HTTPD_COMPAT_STDLIB_H
 
 #include <sys/types.h>
 #include <stdint.h>
@@ -28,12 +28,6 @@ uint32_t arc4random_uniform(uint32_t upper_bound);
 #ifndef HAVE_FREEZERO
 void freezero(void *ptr, size_t sz);
 #endif
-
-#ifndef HAVE_GETPROGNAME
-const char * getprogname(void);
-#endif
-
-void *reallocarray(void *, size_t, size_t);
 
 #ifndef HAVE_RECALLOCARRAY
 void *recallocarray(void *, size_t, size_t, size_t);

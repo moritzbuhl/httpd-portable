@@ -33,8 +33,8 @@
 #include_next <netinet/udp_var.h>
 #else
 
-#ifndef IKED_COMPAT_NETINET_UDP_VAR_H
-#define IKED_COMPAT_NETINET_UDP_VAR_H
+#ifndef HTTPD_COMPAT_NETINET_UDP_VAR_H
+#define HTTPD_COMPAT_NETINET_UDP_VAR_H
 
 /*
  * UDP kernel structures and variables.
@@ -53,6 +53,6 @@ struct	udpiphdr {
 #define	ui_ulen		ui_u.uh_ulen
 #define	ui_sum		ui_u.uh_sum
 
-#endif /* !IKED_COMPAT_NETINET_UDP_VAR_H */
+#endif /* !HTTPD_COMPAT_NETINET_UDP_VAR_H */
 
 #endif

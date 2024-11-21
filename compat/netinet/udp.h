@@ -33,8 +33,8 @@
 #include_next <netinet/udp.h>
 #else
 
-#ifndef IKED_COMPAT_NETINET_UDP_H
-#define IKED_COMPAT_NETINET_UDP_H
+#ifndef HTTPD_COMPAT_NETINET_UDP_H
+#define HTTPD_COMPAT_NETINET_UDP_H
 
 /*
  * Udp protocol header.
@@ -47,6 +47,6 @@ struct udphdr {
 	uint16_t uh_sum;		/* udp checksum */
 };
 
-#endif /* !IKED_COMPAT_NETINET_UDP_H */
+#endif /* !HTTPD_COMPAT_NETINET_UDP_H */
 
 #endif

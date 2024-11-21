@@ -33,8 +33,8 @@
 #include_next <netinet/ip.h>
 #else
 
-#ifndef IKED_COMPAT_NETINET_IP_H
-#define IKED_COMPAT_NETINET_IP_H
+#ifndef HTTPD_COMPAT_NETINET_IP_H
+#define HTTPD_COMPAT_NETINET_IP_H
 
 /*
  * Definitions for internet protocol version 4.
@@ -84,6 +84,6 @@ struct ip {
 #define	IPTOS_ECT		0x02	/* ECN-capable transport */
 #endif
 
-#endif /* !IKED_COMPAT_NETINET_IP_H */
+#endif /* !HTTPD_COMPAT_NETINET_IP_H */
 
 #endif

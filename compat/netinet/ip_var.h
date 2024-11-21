@@ -33,8 +33,8 @@
 #include_next <netinet/ip_var.h>
 #else
 
-#ifndef IKED_COMPAT_NETINET_IP_VAR_H
-#define IKED_COMPAT_NETINET_IP_VAR_H
+#ifndef HTTPD_COMPAT_NETINET_IP_VAR_H
+#define HTTPD_COMPAT_NETINET_IP_VAR_H
 
 /*
  * Overlay for ip header used by other protocols (tcp, udp).
@@ -47,6 +47,6 @@ struct ipovly {
 	struct	  in_addr ih_dst;	/* destination internet address */
 };
 
-#endif /* !IKED_COMPAT_NETINET_IP_VAR_H */
+#endif /* !HTTPD_COMPAT_NETINET_IP_VAR_H */
 
 #endif

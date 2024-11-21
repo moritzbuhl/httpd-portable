@@ -3,8 +3,8 @@
  * arc4random.h compatibility shim
  */
 
-#ifndef IKED_COMPAT_ARC4RANDOM_H
-#define IKED_COMPAT_ARC4RANDOM_H
+#ifndef HTTPD_COMPAT_ARC4RANDOM_H
+#define HTTPD_COMPAT_ARC4RANDOM_H
 
 #if defined(_AIX)
 #include "arc4random_aix.h"

@@ -3,10 +3,10 @@
  * unistd.h compatibility shim
  */
 
-#ifndef IKED_COMPAT_UNISTD_H
-#define IKED_COMPAT_UNISTD_H
+#ifndef HTTPD_COMPAT_UNISTD_H
+#define HTTPD_COMPAT_UNISTD_H
 
-#ifndef _MSC_VER
+#ifdef HAVE_UNISTD_H
 
 #include_next <unistd.h>
 
