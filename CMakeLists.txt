@@ -355,8 +355,8 @@ install(CODE "
 	)
 	if(NOT USER_EXISTS EQUAL 0)
 		message(FATAL_ERROR
-			\"User 'www' required for installation.\"
-			\"adduser --no-create-home --home /var/www www\" # XXX
+			\"User 'www' required for installation.\n\"
+			\"useradd -s /usr/sbin/nologin -d /var/www www\" # XXX
 		)
 	endif()
 ")
