@@ -48,7 +48,7 @@ endif()
 if(NOT HAVE_GETOPT)
 	list(APPEND SRCS ${HTTPD_COMPAT}/getopt_long.c)
 endif()
-if(NOT HAVE_IMSG_H)
+if(NOT HAVE_IMSG_H OR NOT HAVE_MSGBUF_NEW_READER)
 	list(APPEND SRCS
 		# imsg
 		${HTTPD_COMPAT}/imsg.c
@@ -78,9 +78,6 @@ if(NOT HAVE_REALLOCARRAY)
 endif()
 if(NOT HAVE_VIS)
 	list(APPEND SRCS ${HTTPD_COMPAT}/vis.c)
-endif()
-if(NOT HAVE_IBUF_ADD_BUF OR NOT HAVE_IBUF_ADD_ZERO OR NOT HAVE_IBUF_DATA)
-	list(APPEND SRCS ${HTTPD_COMPAT}/ibuf-compat.c)
 endif()
 
 set(CFLAGS)
