@@ -60,6 +60,9 @@
 #include "httpd.h"
 #include "http.h"
 
+#define OPT_TLS		1
+#define OPT_QUIC	2
+
 TAILQ_HEAD(files, file)		 files = TAILQ_HEAD_INITIALIZER(files);
 static struct file {
 	TAILQ_ENTRY(file)	 entry;
@@ -148,6 +151,7 @@ typedef struct {
 %token	ERROR INCLUDE AUTHENTICATE WITH BLOCK DROP RETURN PASS REWRITE
 %token	CA CLIENT CRL OPTIONAL PARAM FORWARDED FOUND NOT
 %token	ERRDOCS GZIPSTATIC
+%token	QUIC
 %token	<v.string>	STRING
 %token  <v.number>	NUMBER
 %type	<v.port>	port
@@ -203,7 +207,8 @@ varset		: STRING '=' STRING	{
 		;
 
 opttls		: /*empty*/	{ $$ = 0; }
-		| TLS		{ $$ = 1; }
+		| TLS		{ $$ = OPT_TLS; }
+		| QUIC		{ $$ = OPT_QUIC; }
 		;
 
 main		: PREFORK NUMBER	{
@@ -349,6 +354,7 @@ server		: SERVER optmatch STRING	{
 				YYERROR;
 			}
 
+			/* XXX: SRVFLAG_QUIC */
 			if ((s = server_match(srv, 0)) != NULL) {
 				if ((s->srv_conf.flags & SRVFLAG_TLS) !=
 				    (srv->srv_conf.flags & SRVFLAG_TLS)) {
@@ -548,7 +554,8 @@ serveroptsl	: LISTEN ON STRING opttls port	{
 
 			/* Ensure that at least one server has TLS enabled. */
 			TAILQ_FOREACH(sc, &srv->srv_hosts, entry) {
-				tls_flag |= (sc->flags & SRVFLAG_TLS);
+				tls_flag |= (sc->flags & (SRVFLAG_TLS |
+				    SRVFLAG_QUIC));
 			}
 			if (tls_flag == 0) {
 				yyerror("tls options without tls listener");
@@ -1488,6 +1495,7 @@ lookup(char *s)
 		{ "prefork",		PREFORK },
 		{ "preload",		PRELOAD },
 		{ "protocols",		PROTOCOLS },
+		{ "quic",		QUIC },
 		{ "request",		REQUEST },
 		{ "requests",		REQUESTS },
 		{ "return",		RETURN },
@@ -2344,6 +2352,10 @@ server_inherit(struct server *src, struct server_config *alias,
 		dst->srv_conf.flags |= SRVFLAG_TLS;
 	else
 		dst->srv_conf.flags &= ~SRVFLAG_TLS;
+	if (addr->flags & SRVFLAG_QUIC)
+		dst->srv_conf.flags |= SRVFLAG_QUIC;
+	else
+		dst->srv_conf.flags &= ~SRVFLAG_QUIC;
 
 	/* Don't inherit the "match" option, use it from the alias */
 	dst->srv_conf.flags &= ~SRVFLAG_SERVER_MATCH;
@@ -2467,8 +2479,10 @@ listen_on(const char *addr, int tls, struct portrange *port)
 		else
 			s_conf->port = h->port.val[0];
 
-		if (tls)
+		if (tls == OPT_TLS)
 			s_conf->flags |= SRVFLAG_TLS;
+		else if (tls == OPT_QUIC)
+			s_conf->flags |= SRVFLAG_QUIC;
 
 		if (alias != NULL) {
 			/*

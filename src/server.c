@@ -25,6 +25,7 @@
 #include <sys/tree.h>
 
 #include <netinet/in.h>
+#include <netinet/quic.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
@@ -182,7 +183,12 @@ server_tls_cmp(struct server *s1, struct server *s2)
 int
 server_tls_load_keypair(struct server *srv)
 {
-	if ((srv->srv_conf.flags & SRVFLAG_TLS) == 0)
+	if (srv->srv_conf.flags & SRVFLAG_QUIC) {
+		log_debug("%s: using certificate %s", __func__,
+		    srv->srv_conf.tls_cert_file);
+		log_debug("%s: using private key %s", __func__,
+		    srv->srv_conf.tls_key_file);
+	} else if (srv->srv_conf.flags & SRVFLAG_TLS == 0)
 		return (0);
 
 	if ((srv->srv_conf.tls_cert = tls_load_file(srv->srv_conf.tls_cert_file,
@@ -671,13 +677,18 @@ server_socket(struct sockaddr_storage *ss, in_port_t port,
     struct server_config *srv_conf, int fd, int reuseport)
 {
 	struct linger	lng;
-	int		s = -1, val;
+	int		proto = IPPROTO_TCP, s = -1, val;
 
 	if (server_socket_af(ss, port) == -1)
 		goto bad;
 
-	s = fd == -1 ? socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK,
-	    IPPROTO_TCP) : fd;
+	if (srv_conf->flags & SRVFLAG_QUIC)
+		proto = IPPROTO_QUIC;
+
+	if (fd != -1)
+		s = fd;
+	else
+		s = socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK, proto);
 	if (s == -1)
 		goto bad;
 
@@ -972,6 +983,10 @@ server_input(struct client *clt)
 		event_set(&clt->clt_bev->ev_write, clt->clt_s, EV_WRITE,
 		    server_tls_writecb, clt->clt_bev);
 	}
+	if (srv_conf->flags & SRVFLAG_QUIC) {
+		/* XXX */
+		;
+	}
 
 	/* Adjust write watermark to the socket buffer output size */
 	bufferevent_setwatermark(clt->clt_bev, EV_WRITE,
@@ -1195,6 +1210,12 @@ server_accept(int fd, short event, void *arg)
 		    server_tls_handshake, &clt->clt_tv_start,
 		    &srv->srv_conf.timeout, clt);
 		return;
+	} else if (srv->srv_conf.flags & SRVFLAG_QUIC) {
+		if (quic_server_handshake(fd, srv->srv_conf.tls_key_file,
+		    srv->srv_conf.tls_cert_file, "h3") != 0) {
+			server_close(clt, "failed to accept quic socket");
+			return;
+		}
 	}
 
 	server_input(clt);
