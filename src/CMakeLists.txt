@@ -89,6 +89,13 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	)
 endif()
 
+set(WANT_QUIC 1) # XXX
+if(WANT_QUIC)
+	list(APPEND LIBS
+		quic
+	)
+endif()
+
 target_link_libraries(httpd
 	PRIVATE ${LIBS}
 )
