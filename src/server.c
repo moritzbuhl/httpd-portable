@@ -183,12 +183,7 @@ server_tls_cmp(struct server *s1, struct server *s2)
 int
 server_tls_load_keypair(struct server *srv)
 {
-	if (srv->srv_conf.flags & SRVFLAG_QUIC) {
-		log_debug("%s: using certificate %s", __func__,
-		    srv->srv_conf.tls_cert_file);
-		log_debug("%s: using private key %s", __func__,
-		    srv->srv_conf.tls_key_file);
-	} else if (srv->srv_conf.flags & SRVFLAG_TLS == 0)
+	if ((srv->srv_conf.flags & (SRVFLAG_TLS | SRVFLAG_QUIC)) == 0)
 		return (0);
 
 	if ((srv->srv_conf.tls_cert = tls_load_file(srv->srv_conf.tls_cert_file,
@@ -1211,8 +1206,8 @@ server_accept(int fd, short event, void *arg)
 		    &srv->srv_conf.timeout, clt);
 		return;
 	} else if (srv->srv_conf.flags & SRVFLAG_QUIC) {
-		if (quic_server_handshake(fd, srv->srv_conf.tls_key_file,
-		    srv->srv_conf.tls_cert_file, "h3") != 0) {
+		if (quic_server_handshake(fd, srv->srv_conf.tls_key,
+		    srv->srv_conf.tls_cert, "h3") != 0) {
 			server_close(clt, "failed to accept quic socket");
 			return;
 		}

@@ -364,4 +364,5 @@ install(CODE "
 
 
 add_subdirectory(compat)
+add_subdirectory(quic)
 add_subdirectory(src)
