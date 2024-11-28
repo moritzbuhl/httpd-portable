@@ -672,18 +672,19 @@ server_socket(struct sockaddr_storage *ss, in_port_t port,
     struct server_config *srv_conf, int fd, int reuseport)
 {
 	struct linger	lng;
-	int		proto = IPPROTO_TCP, s = -1, val;
+	int		s = -1, val;
 
 	if (server_socket_af(ss, port) == -1)
 		goto bad;
 
-	if (srv_conf->flags & SRVFLAG_QUIC)
-		proto = IPPROTO_QUIC;
-
 	if (fd != -1)
 		s = fd;
+	else if (srv_conf->flags & SRVFLAG_QUIC)
+		s = socket(ss->ss_family, SOCK_DGRAM | SOCK_NONBLOCK,
+		    IPPROTO_QUIC);
 	else
-		s = socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK, proto);
+		s = socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK,
+		    IPPROTO_TCP);
 	if (s == -1)
 		goto bad;
 
