@@ -14,7 +14,6 @@
 
 set(HTTPD_QUIC			"${CMAKE_CURRENT_SOURCE_DIR}")
 set(SRCS
-	${HTTPD_QUIC}/client.c
 	${HTTPD_QUIC}/handshake.c
 	${HTTPD_QUIC}/server.c
 )

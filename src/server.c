@@ -49,6 +49,8 @@
 
 #define MINIMUM(a, b)	(((a) < (b)) ? (a) : (b))
 
+#define H3_ALPN		"h3, h3-29"
+
 int		 server_dispatch_parent(int, struct privsep_proc *,
 		    struct imsg *);
 int		 server_dispatch_logger(int, struct privsep_proc *,
@@ -62,6 +64,9 @@ int		 server_socket(struct sockaddr_storage *, in_port_t,
 int		 server_socket_listen(struct sockaddr_storage *, in_port_t,
 		    struct server_config *);
 struct server	*server_byid(uint32_t);
+
+int		 server_quic_init(struct server *);
+void		 server_quic_handshake(int, short, void *);
 
 int		 server_tls_init(struct server *);
 void		 server_tls_readcb(int, short, void *);
@@ -152,6 +157,23 @@ server_privinit(struct server *srv)
 	if ((srv->srv_s = server_socket_listen(&srv->srv_conf.ss,
 	    srv->srv_conf.port, &srv->srv_conf)) == -1)
 		return (-1);
+
+	return (0);
+}
+
+int
+server_quic_init(struct server *srv)
+{
+	if ((srv->srv_conf.flags & SRVFLAG_QUIC) == 0)
+		return (0);
+
+	log_debug("%s: setting up quic for %s", __func__, srv->srv_conf.name);
+	if ((srv->srv_quic_ctx = quic_server_init(srv->srv_conf.tls_key,
+	    srv->srv_conf.tls_key_len, srv->srv_conf.tls_cert,
+	    srv->srv_conf.tls_cert_len)) == NULL) {
+		log_warnx("%s: failed to get quic server", __func__);
+		return (-1);
+	}
 
 	return (0);
 }
@@ -445,6 +467,7 @@ server_launch(void)
 		    srv->srv_conf.name);
 
 		server_tls_init(srv);
+		server_quic_init(srv);
 		server_http_init(srv);
 
 		log_debug("%s: running server %s", __func__,
@@ -788,6 +811,19 @@ server_socket_listen(struct sockaddr_storage *ss, in_port_t port,
 
 	if (bind(s, (struct sockaddr *)ss, SS_LEN(ss)) == -1)
 		goto bad;
+	if (srv_conf->flags & SRVFLAG_QUIC) {
+		struct quic_transport_param tp;
+		char *alpn = H3_ALPN;
+
+		memset(&tp, 0, sizeof(tp));
+		tp.grease_quic_bit = 1;
+		if (setsockopt(s, SOL_QUIC, QUIC_SOCKOPT_TRANSPORT_PARAM,
+		    &tp, sizeof(tp)))
+			goto bad;
+		if (setsockopt(s, SOL_QUIC, QUIC_SOCKOPT_ALPN, alpn,
+		    strlen(alpn)))
+			goto bad;
+	}
 	if (listen(s, srv_conf->tcpbacklog) == -1)
 		goto bad;
 
@@ -981,7 +1017,6 @@ server_input(struct client *clt)
 	}
 	if (srv_conf->flags & SRVFLAG_QUIC) {
 		/* XXX */
-		;
 	}
 
 	/* Adjust write watermark to the socket buffer output size */
@@ -1207,11 +1242,15 @@ server_accept(int fd, short event, void *arg)
 		    &srv->srv_conf.timeout, clt);
 		return;
 	} else if (srv->srv_conf.flags & SRVFLAG_QUIC) {
-		if (quic_server_handshake(fd, srv->srv_conf.tls_key,
-		    srv->srv_conf.tls_cert, "h3") != 0) {
-			server_close(clt, "failed to accept quic socket");
+		if ((clt->clt_quic_ctx = quic_server_session_init(clt->clt_s,
+		    srv->srv_quic_ctx, H3_ALPN)) == NULL) {
+			server_close(clt, "failed to init quic socket");
 			return;
 		}
+		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT|EV_READ,
+		    server_quic_handshake, &clt->clt_tv_start,
+		    &srv->srv_conf.timeout, clt);
+		return;
 	}
 
 	server_input(clt);
@@ -1226,6 +1265,38 @@ server_accept(int fd, short event, void *arg)
 		 * counted as an inflight client. account for this.
 		 */
 		server_inflight_dec(NULL, __func__);
+	}
+}
+
+void
+server_quic_handshake(int fd, short event, void *arg)
+{
+	struct client *clt = (struct client *)arg;
+	struct server *srv = (struct server *)clt->clt_srv;
+	int ret;
+
+	if (event == EV_TIMEOUT) {
+		server_close(clt, "quic handshake timeout");
+		return;
+	}
+
+	if (clt->clt_quic_ctx == NULL)
+		fatalx("NULL tls context");
+
+	ret = quic_handshake(clt->clt_quic_ctx);
+	if (ret == 0) {
+		server_input(clt);
+	} else if (ret == TLS_WANT_POLLIN) {
+		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT|EV_READ,
+		    server_quic_handshake, &clt->clt_tv_start,
+		    &srv->srv_conf.timeout, clt);
+	} else if (ret == TLS_WANT_POLLOUT) {
+		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT|EV_WRITE,
+		    server_quic_handshake, &clt->clt_tv_start,
+		    &srv->srv_conf.timeout, clt);
+	} else {
+		log_debug("%s: quic handshake failed", __func__);
+		server_close(clt, "quic handshake failed");
 	}
 }
 

@@ -37,6 +37,8 @@
 #include <tls.h>
 #include <vis.h>
 
+#include <gnutls/abstract.h>
+
 #include "patterns.h"
 
 #ifndef nitems
@@ -332,6 +334,7 @@ struct client {
 	uint64_t		 clt_boundary;
 
 	int			 clt_fd;
+	gnutls_session_t	 clt_quic_ctx;
 	struct tls		*clt_tls_ctx;
 	struct bufferevent	*clt_srvbev;
 	int			 clt_srvbev_throttled;
@@ -572,6 +575,7 @@ struct server {
 	struct event		 srv_ev;
 	struct event		 srv_evt;
 
+	gnutls_certificate_credentials_t srv_quic_ctx;
 	struct tls		 *srv_tls_ctx;
 	struct tls_config	 *srv_tls_config;
 
