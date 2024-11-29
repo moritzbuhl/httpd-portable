@@ -24,14 +24,78 @@
 
 #include "netinet/quic.h"
 
-static int quic_server_x509_handshake(int sockfd, const char *pkey,
-				      const char *cert, const char *alpns)
+/**
+ * quic_server_session_init - setup for a QUIC handshake with Certificate on server side
+ * @s: IPPROTO_QUIC type socket
+ * @cred: gnutls certificate credentials
+ * @alpns: ALPNs supported and split by ','
+ *
+ * Return values:
+ * - On success, a gnutls_session_t session
+ * - On error, NULL
+ */
+gnutls_session_t quic_server_session_init(int s, gnutls_certificate_credentials_t cred,
+					  const char *alpns)
 {
-	gnutls_certificate_credentials_t cred;
 	gnutls_session_t session;
 	size_t alpn_len;
 	char alpn[64];
 	int ret;
+
+	ret = gnutls_init(&session, GNUTLS_SERVER | GNUTLS_NO_AUTO_SEND_TICKET);
+	if (ret)
+		goto err;
+	ret = gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, cred);
+	if (ret)
+		goto err_session;
+	ret = gnutls_priority_set_direct(session, QUIC_PRIORITY, NULL);
+	if (ret)
+		goto err_session;
+	if (alpns) {
+		ret = quic_session_set_alpn(session, alpns, strlen(alpns));
+		if (ret)
+			goto err_session;
+	}
+
+	gnutls_transport_set_int(session, s);
+
+	return session;
+
+/* XXX
+	if (alpns) {
+		alpn_len = sizeof(alpn);
+		ret = quic_session_get_alpn(session, alpn, &alpn_len);
+	}
+*/
+
+err_session:
+	gnutls_deinit(session);
+err:
+	return NULL;
+}
+
+/**
+ * quic_server_init - setup for a QUIC handshake with Certificate on server side
+ * @pkey: PEM formatted private key
+ * @pkey_len: length of the PEM formatted private key
+ * @cert: PEM formatted certificate
+ * @cert_len: length of the PEM formatted certificate
+ *
+ * Return values:
+ * - On success, gnutls certificate credentials
+ * - On error, NULL
+ */
+gnutls_certificate_credentials_t quic_server_init(const char *pkey, size_t pkey_len,
+						  const char *cert, size_t cert_len)
+{
+	gnutls_certificate_credentials_t cred;
+	gnutls_datum_t gcert, gkey;
+	int ret;
+
+	gcert.data = cert;
+	gcert.size = cert_len;
+	gkey.data = pkey;
+	gkey.size = pkey_len;
 
 	ret = gnutls_certificate_allocate_credentials(&cred);
 	if (ret)
@@ -39,58 +103,14 @@ static int quic_server_x509_handshake(int sockfd, const char *pkey,
 	ret = gnutls_certificate_set_x509_system_trust(cred);
 	if (ret < 0)
 		goto err_cred;
-	ret = gnutls_certificate_set_x509_key_mem2(cred, cert, pkey, GNUTLS_X509_FMT_PEM, NULL, 0);
+	ret = gnutls_certificate_set_x509_key_mem2(cred, &gcert, &gkey, GNUTLS_X509_FMT_PEM, NULL, 0);
 	if (ret)
 		goto err_cred;
-	ret = gnutls_init(&session, GNUTLS_SERVER | GNUTLS_NO_AUTO_SEND_TICKET);
-	if (ret)
-		goto err_cred;
-	ret = gnutls_credentials_set(session, GNUTLS_CRD_CERTIFICATE, cred);
-	if (ret)
-		goto err_session;
 
-	ret = gnutls_priority_set_direct(session, QUIC_PRIORITY, NULL);
-	if (ret)
-		goto err_session;
+	return cred;
 
-	if (alpns) {
-		ret = quic_session_set_alpn(session, alpns, strlen(alpns));
-		if (ret)
-			goto err_session;
-	}
-
-	gnutls_transport_set_int(session, sockfd);
-
-	ret = quic_handshake(session);
-	if (ret)
-		goto err_session;
-
-	if (alpns) {
-		alpn_len = sizeof(alpn);
-		ret = quic_session_get_alpn(session, alpn, &alpn_len);
-	}
-
-err_session:
-	gnutls_deinit(session);
 err_cred:
 	gnutls_certificate_free_credentials(cred);
 err:
-	return ret;
-}
-
-/**
- * quic_server_handshake - start a QUIC handshake with Certificate or PSK mode on server side
- * @sockfd: IPPROTO_QUIC type socket
- * @pkey: private key
- * @cert: certificate
- * @alpns: ALPNs supported and split by ','
- *
- * Return values:
- * - On success, 0 is returned.
- * - On error, a negative error value is returned.
- */
-int quic_server_handshake(int sockfd, const char *pkey_file,
-			  const char *cert_file, const char *alpns)
-{
-	return  quic_server_x509_handshake(sockfd, pkey_file, cert_file, alpns);
+	return NULL;
 }
