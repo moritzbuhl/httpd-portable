@@ -29,10 +29,10 @@
 	"+GROUP-X25519:+GROUP-SECP384R1:+GROUP-SECP521R1:" \
 	"%DISABLE_TLS13_COMPAT_MODE"
 
-int quic_client_handshake(int sockfd, const char *pkey_file,
-			  const char *hostname, const char *alpns);
-int quic_server_handshake(int sockfd, const char *pkey_file,
-			  const char *cert_file, const char *alpns);
+gnutls_session_t quic_server_session_init(int sockfd, gnutls_certificate_credentials_t cred,
+					  const char *alpns);
+gnutls_certificate_credentials_t quic_server_init(const char *pkey, size_t pkey_len,
+						  const char *cert, size_t cert_len);
 
 int quic_handshake(gnutls_session_t session);
 
