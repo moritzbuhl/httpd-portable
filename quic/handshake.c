@@ -25,6 +25,8 @@
 #include <errno.h>
 #include <stdio.h>
 
+#include <tls.h>
+
 #include "netinet/quic.h"
 
 #define QUIC_TLSEXT_TP_PARAM	0x39u
@@ -44,10 +46,9 @@ struct quic_ctx {
 	struct quic_msg *send_last;
 	struct quic_msg recv_msg;
 	uint8_t completed:1;
-	uint8_t is_serv:1;
 };
 
-static int quic_log_level = LOG_NOTICE;
+static int quic_log_level = LOG_DEBUG;
 static void (*quic_log_func)(int level, const char *msg);
 
 /**
@@ -332,12 +333,10 @@ static int quic_set_secret(gnutls_session_t session, gnutls_record_encryption_le
 			return -1;
 		}
 		if (secret.level == QUIC_CRYPTO_APP) {
-			if (ctx->is_serv) {
-				ret = gnutls_session_ticket_send(session, 1, 0);
-				if (ret) {
-					quic_log_gnutls_error(ret);
-					return ret;
-				}
+			ret = gnutls_session_ticket_send(session, 1, 0);
+			if (ret) {
+				quic_log_gnutls_error(ret);
+				return ret;
 			}
 			ctx->completed = 1;
 		}
@@ -354,6 +353,7 @@ static int quic_alert_read(gnutls_session_t session,
 	quic_log_notice("%s: %u %u %u %u", __func__,
 			!!session, gtls_level, alert_level, alert_desc);
 	return 0;
+
 }
 
 static int quic_tp_recv(gnutls_session_t session, const uint8_t *buf, size_t len)
@@ -526,23 +526,12 @@ static int quic_storage_add(void *dbf, time_t exp_time, const gnutls_datum_t *ke
 
 static gnutls_anti_replay_t quic_anti_replay;
 
-/**
- * quic_handshake - Drive the handshake interaction with TLS session
- * @session: TLS session
- *
- * Return values:
- * - On success, 0 is returned.
- * - On error, a negative error value is returned.
- */
-int quic_handshake(gnutls_session_t session)
+static int quic_setup_handshake(gnutls_session_t session)
 {
 	int ret, sockfd = gnutls_transport_get_int(session);
 	struct quic_ctx *ctx;
-	struct quic_msg *msg;
-	struct timeval tv;
 	unsigned int len;
 	uint8_t opt[128];
-	fd_set readfds;
 
 	ctx = malloc(sizeof(*ctx));
 	if (!ctx) {
@@ -552,7 +541,6 @@ int quic_handshake(gnutls_session_t session)
 	memset(ctx, 0, sizeof(*ctx));
 	len = sizeof(opt);
 	ret = getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_TOKEN, opt, &len);
-	ctx->is_serv = !!ret;
 	/* gnutls_session_set_ptr() might be used by the caller. */
 	gnutls_db_set_ptr(session, ctx);
 
@@ -566,80 +554,78 @@ int quic_handshake(gnutls_session_t session)
 	if (ret)
 		goto out;
 
-	if (!ctx->is_serv) {
-		ret = quic_handshake_process(session, QUIC_CRYPTO_INITIAL, NULL, 0);
+	if (!quic_anti_replay) {
+		ret = gnutls_anti_replay_init(&quic_anti_replay);
 		if (ret)
 			goto out;
+		gnutls_anti_replay_set_add_function(quic_anti_replay, quic_storage_add);
+		gnutls_anti_replay_set_ptr(quic_anti_replay, NULL);
+	}
+	gnutls_anti_replay_enable(session, quic_anti_replay);
 
-		msg = ctx->send_list;
-		while (msg) {
-			quic_log_debug("< Handshake SEND: %d %d", msg->len, msg->level);
-			ret = quic_handshake_sendmsg(sockfd, msg);
-			if (ret < 0) {
-				quic_log_error("socket sendmsg error %d", errno);
-				ret = -errno;
-				goto out;
-			}
-			ctx->send_list = msg->next;
-			free(msg);
-			msg = ctx->send_list;
-		}
-	} else {
-		if (!quic_anti_replay) {
-			ret = gnutls_anti_replay_init(&quic_anti_replay);
-			if (ret)
-				goto out;
-			gnutls_anti_replay_set_add_function(quic_anti_replay, quic_storage_add);
-			gnutls_anti_replay_set_ptr(quic_anti_replay, NULL);
-		}
-		gnutls_anti_replay_enable(session, quic_anti_replay);
+	return 0;
+out:
+	gnutls_db_set_ptr(session, NULL);
+	free(ctx);
+	return ret < 0 ? ret : 0;
+}
+
+/**
+ * quic_handshake - Drive the handshake interaction with TLS session
+ * @session: TLS session
+ *
+ * Return values:
+ * - On success, 0 is returned.
+ * - On error, a negative error value is returned.
+ */
+int quic_handshake(gnutls_session_t session)
+{
+	int ret = 0, sockfd = gnutls_transport_get_int(session);
+	struct quic_msg *msg;
+	struct quic_ctx *ctx = gnutls_db_get_ptr(session);
+
+	if (!ctx) {
+		ret = quic_setup_handshake(session);
+		if (ret)
+			goto out;
+		ctx = gnutls_db_get_ptr(session);
 	}
 
-	while (!ctx->completed) {
-		tv.tv_sec = 1;
-		tv.tv_usec = 0;
-		FD_ZERO(&readfds);
-		FD_SET(sockfd, &readfds);
+	if (ctx->completed)
+		goto out;
 
-		ret = select(sockfd + 1, &readfds, NULL,  NULL, &tv);
+	msg = &ctx->recv_msg;
+	ret = quic_handshake_recvmsg(sockfd, msg);
+	if (ret <= 0) {
+		if (ret == 0 || errno == EAGAIN || errno == EWOULDBLOCK)
+			return TLS_WANT_POLLIN;
+		quic_log_error("socket recvmsg error %d", errno);
+		ret = -errno;
+		goto out;
+	}
+	quic_log_debug("> Handshake RECV: %u %u", msg->len, msg->level);
+	ret = quic_handshake_process(session, msg->level, msg->data, msg->len);
+	if (ret)
+		goto out;
+
+	msg = ctx->send_list;
+	while (msg) {
+		quic_log_debug("< Handshake SEND: %u %u", msg->len, msg->level);
+		ret = quic_handshake_sendmsg(sockfd, msg);
 		if (ret < 0) {
-			quic_log_error("socket select error %d", errno);
+			quic_log_error("socket sendmsg error %d", errno);
 			ret = -errno;
 			goto out;
 		}
-		msg = &ctx->recv_msg;
-		while (!ctx->completed) {
-			ret = quic_handshake_recvmsg(sockfd, msg);
-			if (ret <= 0) {
-				if (errno == EAGAIN || errno == EWOULDBLOCK)
-					break;
-				quic_log_error("socket recvmsg error %d", errno);
-				ret = -errno;
-				goto out;
-			}
-			quic_log_debug("> Handshake RECV: %u %u", msg->len, msg->level);
-			ret = quic_handshake_process(session, msg->level, msg->data, msg->len);
-			if (ret)
-				goto out;
-		}
-
+		ctx->send_list = msg->next;
+		free(msg);
 		msg = ctx->send_list;
-		while (msg) {
-			quic_log_debug("< Handshake SEND: %u %u", msg->len, msg->level);
-			ret = quic_handshake_sendmsg(sockfd, msg);
-			if (ret < 0) {
-				quic_log_error("socket sendmsg error %d", errno);
-				ret = -errno;
-				goto out;
-			}
-			ctx->send_list = msg->next;
-			free(msg);
-			msg = ctx->send_list;
-		}
 	}
+	if (!ctx->completed)
+		return TLS_WANT_POLLIN;
 
 out:
-	gnutls_db_set_ptr(session, NULL);
+	// gnutls_db_set_ptr(session, NULL); // XXX
 
 	msg = ctx->send_list;
 	while (msg) {
@@ -647,7 +633,7 @@ out:
 		free(msg);
 		msg = ctx->send_list;
 	}
-	free(ctx);
+	// free(ctx); // XXX
 	return ret < 0 ? ret : 0;
 }
 

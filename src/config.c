@@ -403,7 +403,7 @@ config_setserver_tls(struct httpd *env, struct server *srv)
 {
 	struct server_config	*srv_conf = &srv->srv_conf;
 
-	if ((srv_conf->flags & SRVFLAG_TLS) == 0)
+	if ((srv_conf->flags & (SRVFLAG_TLS | SRVFLAG_QUIC)) == 0)
 		return (0);
 
 	log_debug("%s: configuring tls for %s", __func__, srv_conf->name);
