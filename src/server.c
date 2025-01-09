@@ -216,6 +216,9 @@ server_tls_load_keypair(struct server *srv)
 #ifdef HAVE_NETINET_QUIC_H
 	if ((srv->srv_conf.flags & (SRVFLAG_TLS | SRVFLAG_QUIC)) == 0)
 		return (0);
+#else
+	if ((srv->srv_conf.flags & SRVFLAG_TLS) == 0)
+		return (0);
 #endif
 
 	if ((srv->srv_conf.tls_cert = tls_load_file(srv->srv_conf.tls_cert_file,
@@ -838,7 +841,7 @@ server_socket_listen(struct sockaddr_storage *ss, in_port_t port,
 		if (setsockopt(s, SOL_QUIC, QUIC_SOCKOPT_ALPN, alpn,
 		    strlen(alpn)))
 			goto bad;
-		srv_conf->tcpbacklog = 1; // XXX: backlog of 0 disables listen
+		srv_conf->tcpbacklog = 1; // XXX: default of 0 disables listen
 	}
 #endif
 	if (listen(s, srv_conf->tcpbacklog) == -1)
@@ -1023,8 +1026,8 @@ server_input(struct client *clt)
 	if (srv_conf->flags & SRVFLAG_QUIC) {
 		event_del(&clt->clt_ev);
 		event_set(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
-		    EV_WRITE | EV_PERSIST, XXX, clt);
-		event_add(ev, &srv->srv_conf.timeout);
+		    EV_WRITE | EV_PERSIST, server_quic_ev_switch, clt);
+		event_add(&clt->clt_ev, &srv_conf->timeout);
 		return;
 	}
 #endif
@@ -1333,15 +1336,11 @@ server_quic_ev_switch(int fd, short event, void *arg)
 	struct server *srv = (struct server *)clt->clt_srv;
 	int ret;
 
-	switch(event) {
-	case EV_TIMEOUT:
+	if (event & EV_TIMEOUT) {
 		server_close(clt, "quic timeout");
-		break;
-	case EV_READ:
-		server_read_http3
-		break;
-	case EV_WRITE:
-		break;
+	} else if (event & EV_READ) {
+		server_read_http3(fd, arg);
+	} else if (event & EV_WRITE) {
 	}
 }
 #endif

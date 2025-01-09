@@ -63,6 +63,11 @@ list(APPEND SRCS
 	# Generated files
 	${CMAKE_CURRENT_BINARY_DIR}/parse.c
 )
+if(HAVE_NETINET_QUIC_H)
+	list(APPEND SRCS
+		server_http3.c
+	)
+endif()
 
 add_executable(httpd ${SRCS})
 
@@ -92,6 +97,7 @@ endif()
 if(HAVE_NETINET_QUIC_H)
 	list(APPEND LIBS
 		quic
+		nghttp3
 	)
 endif()
 
