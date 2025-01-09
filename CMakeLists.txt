@@ -331,6 +331,11 @@ if(HAVE_LIBEVENT2)
 	add_definitions(-DHAVE_LIBEVENT2)
 endif()
 
+check_include_files(netinet/quic.h HAVE_NETINET_QUIC_H)
+if(HAVE_NETINET_QUIC_H)
+	add_definitions(-DHAVE_NETINET_QUIC_H)
+endif()
+
 if(ASAN)
 	message("Using ASAN")
 	string(APPEND CMAKE_C_FLAGS " -fno-omit-frame-pointer -fsanitize=address")
@@ -364,5 +369,7 @@ install(CODE "
 
 
 add_subdirectory(compat)
-add_subdirectory(quic)
+if(HAVE_NETINET_QUIC_H)
+	add_subdirectory(quic)
+endif()
 add_subdirectory(src)

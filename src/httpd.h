@@ -38,6 +38,7 @@
 #include <vis.h>
 
 #include <gnutls/abstract.h>
+#include <nghttp3/nghttp3.h>
 
 #include "patterns.h"
 
@@ -328,6 +329,7 @@ struct client {
 	struct bufferevent	*clt_bev;
 	struct evbuffer		*clt_output;
 	struct event		 clt_ev;
+	nghttp3_conn		*clt_h3conn;
 	struct http_descriptor	*clt_descreq;
 	struct http_descriptor	*clt_descresp;
 	int			 clt_sndbufsiz;
@@ -679,6 +681,7 @@ SPLAY_PROTOTYPE(client_tree, client, clt_nodes, server_client_cmp);
 void	 server_http_init(struct server *);
 void	 server_http(void);
 int	 server_httpdesc_init(struct client *);
+int	 server_http3conn_init(struct client *);
 void	 server_read_http(struct bufferevent *, void *);
 void	 server_abort_http(struct client *, unsigned int, const char *);
 unsigned int
