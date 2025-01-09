@@ -26,6 +26,7 @@
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <linux/quic.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -47,9 +48,10 @@
 #include "http.h"
 #include "patterns.h"
 
-static int	 server_http3method_cmp(const void *, const void *);
+static int	 server_httpmethod_cmp(const void *, const void *);
 static int	 server_httperror_cmp(const void *, const void *);
 void		 server_httpdesc_free(struct http_descriptor *);
+void		 server_http3conn_free(struct client *);
 int		 server_http_authenticate(struct server_config *,
 		    struct client *);
 static int	 http_version_num(char *);
@@ -62,7 +64,7 @@ static struct http_method	 http_methods[] = HTTP_METHODS;
 static struct http_error	 http_errors[] = HTTP_ERRORS;
 
 void
-server_http(void)
+server_http3(void)
 {
 }
 
@@ -72,11 +74,13 @@ server_http3_init(struct server *srv)
 	/* nothing */
 }
 
+int
 server_http3conn_init(struct client *clt)
 {
-	int64_t ctrl_stream_id, qpack_enc_stream_id, qpack_dec_stream_id;
+	int64_t ctrl_sid, qpk_enc_sid, qpk_dec_sid;
 	struct quic_transport_param param = {};
 	nghttp3_callbacks callbacks = {
+/*
 		http_acked_stream_data,
 		http_stream_close,
 		http_recv_data,
@@ -92,34 +96,25 @@ server_http3conn_init(struct client *clt)
 		http_reset_stream,
 		http_shutdown,
 		http_recv_settings,
+*/
 	};
 	struct quic_stream_info si;
 	socklen_t len = sizeof(si);
 	nghttp3_settings settings;
 	unsigned int plen;
 	int ret;
-        struct http_descriptor *desc;
 
-        if ((desc = calloc(1, sizeof(*desc))) == NULL)
-                return (-1);
-        RB_INIT(&desc->http_headers);
-        clt->clt_descreq = desc;
-
-        if ((desc = calloc(1, sizeof(*desc))) == NULL) {
-                /* req will be cleaned up later */
-                return (-1);
-        }
-        RB_INIT(&desc->http_headers);
-        clt->clt_descresp = desc;
-
-	memset(req, 0, sizeof(*req));
 	nghttp3_settings_default(&settings);
 	settings.qpack_blocked_streams = 100;
 	settings.qpack_max_dtable_capacity = 4096;
 
-	if (nghttp3_conn_server_new(&(clt->httpconn), &callbacks, &settings, NULL, req))
+/*
+	if (nghttp3_conn_server_new(&(clt->httpconn), &callbacks, &settings,
+	    NULL, NULL))
 		return (-1);
+*/
 
+/*
 	plen = sizeof(param);
 	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_TRANSPORT_PARAM, &param,
 	    &plen) == -1) {
@@ -135,10 +130,10 @@ server_http3conn_init(struct client *clt)
 		http_log_error("socket getsockopt stream_open ctrl failed\n");
 		return (-1);
 	}
-	ctrl_stream_id = si.stream_id;
-	if (nghttp3_conn_bind_control_stream(clt->httpconn, ctrl_stream_id))
+	ctrl_sid = si.stream_id;
+	if (nghttp3_conn_bind_control_stream(clt->httpconn, ctrl_sid))
 		return (-1);
-	http_log_debug("%s ctrl_stream_id %llu\n", __func__, ctrl_stream_id);
+	http_log_debug("%s ctrl_stream_id %llu\n", __func__, ctrl_sid);
 
 	si.stream_id = -1;
 	si.stream_flags = MSG_STREAM_UNI;
@@ -146,8 +141,8 @@ server_http3conn_init(struct client *clt)
 		http_log_error("socket getsockopt stream_open enc failed\n");
 		return (-1);
 	}
-	qpack_enc_stream_id = si.stream_id;
-	http_log_debug("%s qpack_enc_stream_id %llu\n", __func__, qpack_enc_stream_id);
+	qpk_enc_sid = si.stream_id;
+	http_log_debug("%s qpack_enc_stream_id %llu\n", __func__, qpk_enc_sid);
 
 	si.stream_id = -1;
 	si.stream_flags = MSG_STREAM_UNI;
@@ -155,428 +150,47 @@ server_http3conn_init(struct client *clt)
 		http_log_error("socket getsockopt stream_open dec failed\n");
 		return (-1);
 	}
-	qpack_dec_stream_id = si.stream_id;
-	http_log_debug("%s qpack_dec_stream_id %llu\n", __func__, qpack_dec_stream_id);
-	if (nghttp3_conn_bind_qpack_streams(clt->httpconn, qpack_enc_stream_id,
-	    qpack_dec_stream_id))
+	qpk_dec_sid = si.stream_id;
+	http_log_debug("%s qpack_dec_stream_id %llu\n", __func__, qpk_dec_sid);
+	if (nghttp3_conn_bind_qpack_streams(clt->httpconn, qpk_enc_sid,
+	    qpk_dec_sid))
 		return (-1);
+*/
 	return (0);
 }
 
 void
 server_http3conn_free(struct client *clt)
 {
-        nghttp3_conn_del(&(clt->httpconn));
+        //nghttp3_conn_del(&(clt->httpconn));
 }
+
 
 void
-server_httpdesc_free(struct http_descriptor *desc)
-{
-	if (desc == NULL)
-		return;
-
-	free(desc->http_path);
-	desc->http_path = NULL;
-	free(desc->http_path_orig);
-	desc->http_path_orig = NULL;
-	free(desc->http_path_alias);
-	desc->http_path_alias = NULL;
-	free(desc->http_query);
-	desc->http_query = NULL;
-	free(desc->http_query_alias);
-	desc->http_query_alias = NULL;
-	free(desc->http_version);
-	desc->http_version = NULL;
-	free(desc->http_host);
-	desc->http_host = NULL;
-
-	kv_purge(&desc->http_headers);
-	desc->http_lastheader = NULL;
-	desc->http_method = 0;
-	desc->http_chunked = 0;
-}
-
-int
-server_http_authenticate(struct server_config *srv_conf, struct client *clt)
-{
-	char			 decoded[1024];
-	FILE			*fp = NULL;
-	struct http_descriptor	*desc = clt->clt_descreq;
-	const struct auth	*auth = srv_conf->auth;
-	struct kv		*ba, key;
-	size_t			 linesize = 0;
-	ssize_t			 linelen;
-	int			 ret = -1;
-	char			*line = NULL, *user = NULL, *pass = NULL;
-	char			*clt_user = NULL, *clt_pass = NULL;
-
-	memset(decoded, 0, sizeof(decoded));
-	key.kv_key = "Authorization";
-
-	if ((ba = kv_find(&desc->http_headers, &key)) == NULL ||
-	    ba->kv_value == NULL)
-		goto done;
-
-	if (strncmp(ba->kv_value, "Basic ", strlen("Basic ")) != 0)
-		goto done;
-
-	if (b64_pton(strchr(ba->kv_value, ' ') + 1, (uint8_t *)decoded,
-	    sizeof(decoded)) <= 0)
-		goto done;
-
-	if ((clt_pass = strchr(decoded, ':')) == NULL)
-		goto done;
-
-	clt_user = decoded;
-	*clt_pass++ = '\0';
-	if ((clt->clt_remote_user = strdup(clt_user)) == NULL)
-		goto done;
-
-	if ((fp = fopen(auth->auth_htpasswd, "r")) == NULL)
-		goto done;
-
-	while ((linelen = getline(&line, &linesize, fp)) != -1) {
-		if (line[linelen - 1] == '\n')
-			line[linelen - 1] = '\0';
-		user = line;
-		pass = strchr(line, ':');
-
-		if (pass == NULL) {
-			explicit_bzero(line, linelen);
-			continue;
-		}
-
-		*pass++ = '\0';
-
-		if (strcmp(clt_user, user) != 0) {
-			explicit_bzero(line, linelen);
-			continue;
-		}
-
-		if (crypt_checkpass(clt_pass, pass) == 0) {
-			explicit_bzero(line, linelen);
-			ret = 0;
-			break;
-		}
-	}
-done:
-	free(line);
-	if (fp != NULL)
-		fclose(fp);
-
-	if (ba != NULL && ba->kv_value != NULL) {
-		explicit_bzero(ba->kv_value, strlen(ba->kv_value));
-		explicit_bzero(decoded, sizeof(decoded));
-	}
-
-	return (ret);
-}
-
-static int
-http_version_num(char *version)
-{
-	if (strlen(version) != 8 || strncmp(version, "HTTP/", 5) != 0
-	    || !isdigit((unsigned char)version[5]) || version[6] != '.'
-	    || !isdigit((unsigned char)version[7]))
-		return (-1);
-	if (version[5] == '0' && version[7] == '9')
-		return (9);
-	if (version[5] == '1') {
-		if (version[7] == '0')
-			return (10);
-		else
-			/* any other version 1.x gets downgraded to 1.1 */
-			return (11);
-	}
-	return (0);
-}
-
-void
-server_read_http3(struct bufferevent *bev, void *arg)
+server_read_http3(int fd, void *arg)
 {
 	struct client		*clt = arg;
-	struct http_descriptor	*desc = clt->clt_descreq;
-	struct evbuffer		*src = EVBUFFER_INPUT(bev);
-	char			*line = NULL, *key, *value;
-	const char		*errstr;
-	char			*http_version, *query;
-	size_t			 size, linelen;
-	int			 version;
-	struct kv		*hdr = NULL;
 
 	getmonotime(&clt->clt_tv_last);
 
-	size = EVBUFFER_LENGTH(src);
+/*
 	DPRINTF("%s: session %d: size %lu, to read %lld",
 	    __func__, clt->clt_id, size, clt->clt_toread);
 	if (!size) {
 		clt->clt_toread = TOREAD_HTTP_HEADER;
 		goto done;
 	}
+*/
 
 	if (nghttp3_conn_read_stream(httpconn, stream_id, buf, ret,
 				       flags & MSG_STREAM_FIN);
 	if (ret < 0)
 		return -1;
 
-	while (!clt->clt_headersdone) {
-		if (!clt->clt_line) {
-			/* Peek into the buffer to see if it looks like HTTP */
-			key = EVBUFFER_DATA(src);
-			if (!isalpha((unsigned char)*key)) {
-				server_abort_http(clt, 400,
-				    "invalid request line");
-				goto abort;
-			}
-		}
-
-		if ((line = evbuffer_readln(src,
-		    &linelen, EVBUFFER_EOL_CRLF_STRICT)) == NULL) {
-			/* No newline found after too many bytes */
-			if (size > SERVER_MAXHEADERLENGTH) {
-				server_abort_http(clt, 413,
-				    "request line too long");
-				goto abort;
-			}
-			break;
-		}
-
-		/*
-		 * An empty line indicates the end of the request.
-		 * libevent already stripped the \r\n for us.
-		 */
-		if (!linelen) {
-			clt->clt_headersdone = 1;
-			free(line);
-			break;
-		}
-		key = line;
-
-		/* Limit the total header length minus \r\n */
-		clt->clt_headerlen += linelen;
-		if (clt->clt_headerlen > SERVER_MAXHEADERLENGTH) {
-			server_abort_http(clt, 413, "request too large");
-			goto abort;
-		}
-
-		/*
-		 * The first line is the GET/POST/PUT/... request,
-		 * subsequent lines are HTTP headers.
-		 */
-		if (++clt->clt_line == 1)
-			value = strchr(key, ' ');
-		else if (*key == ' ' || *key == '\t')
-			/* Multiline headers wrap with a space or tab */
-			value = NULL;
-		else {
-			/* Not a multiline header, should have a : */
-			value = strchr(key, ':');
-			if (value == NULL) {
-				server_abort_http(clt, 400, "malformed");
-				goto abort;
-			}
-		}
-		if (value == NULL) {
-			if (clt->clt_line == 1) {
-				server_abort_http(clt, 400, "malformed");
-				goto abort;
-			}
-
-			/* Append line to the last header, if present */
-			if (kv_extend(&desc->http_headers,
-			    desc->http_lastheader, line) == NULL)
-				goto fail;
-
-			free(line);
-			continue;
-		}
-		if (*value == ':') {
-			*value++ = '\0';
-			value += strspn(value, " \t\r\n");
-		} else {
-			*value++ = '\0';
-		}
-
-		DPRINTF("%s: session %d: header '%s: %s'", __func__,
-		    clt->clt_id, key, value);
-
-		/*
-		 * Identify and handle specific HTTP request methods
-		 */
-		if (clt->clt_line == 1) {
-			if ((desc->http_method = server_httpmethod_byname(key))
-			    == HTTP_METHOD_NONE) {
-				server_abort_http(clt, 400, "malformed");
-				goto abort;
-			}
-
-			/*
-			 * Decode request path and query
-			 */
-			desc->http_path = strdup(value);
-			if (desc->http_path == NULL)
-				goto fail;
-
-			http_version = strchr(desc->http_path, ' ');
-			if (http_version == NULL) {
-				server_abort_http(clt, 400, "malformed");
-				goto abort;
-			}
-
-			*http_version++ = '\0';
-
-			/*
-			 * We have to allocate the strings because they could
-			 * be changed independently by the filters later.
-			 * Allow HTTP version 0.9 to 1.1.
-			 * Downgrade http version > 1.1 <= 1.9 to version 1.1.
-			 * Return HTTP Version Not Supported for anything else.
-			 */
-
-			version = http_version_num(http_version);
-
-			if (version == -1) {
-				server_abort_http(clt, 400, "malformed");
-				goto abort;
-			} else if (version == 0) {
-				server_abort_http(clt, 505, "bad http version");
-				goto abort;
-			} else if (version == 11) {
-				if ((desc->http_version =
-				    strdup("HTTP/1.1")) == NULL)
-					goto fail;
-			} else {
-				if ((desc->http_version =
-				    strdup(http_version)) == NULL)
-					goto fail;
-			}
-
-			query = strchr(desc->http_path, '?');
-			if (query != NULL) {
-				*query++ = '\0';
-
-				if ((desc->http_query = strdup(query)) == NULL)
-					goto fail;
-			}
-
-		} else if (desc->http_method != HTTP_METHOD_NONE &&
-		    strcasecmp("Content-Length", key) == 0) {
-			if (desc->http_method == HTTP_METHOD_TRACE ||
-			    desc->http_method == HTTP_METHOD_CONNECT) {
-				/*
-				 * These method should not have a body
-				 * and thus no Content-Length header.
-				 */
-				server_abort_http(clt, 400, "malformed");
-				goto abort;
-			}
-
-			/*
-			 * Need to read data from the client after the
-			 * HTTP header.
-			 * XXX What about non-standard clients not using
-			 * the carriage return? And some browsers seem to
-			 * include the line length in the content-length.
-			 */
-			clt->clt_toread = strtonum(value, 0, LLONG_MAX,
-			    &errstr);
-			if (errstr) {
-				server_abort_http(clt, 500, errstr);
-				goto abort;
-			}
-		}
-
-		if (strcasecmp("Transfer-Encoding", key) == 0 &&
-		    strcasecmp("chunked", value) == 0)
-			desc->http_chunked = 1;
-
-		if (clt->clt_line != 1) {
-			if ((hdr = kv_add(&desc->http_headers, key,
-			    value)) == NULL)
-				goto fail;
-
-			desc->http_lastheader = hdr;
-		}
-
-		free(line);
-	}
-	if (clt->clt_headersdone) {
-		if (desc->http_method == HTTP_METHOD_NONE) {
-			server_abort_http(clt, 406, "no method");
-			return;
-		}
-
-		switch (desc->http_method) {
-		case HTTP_METHOD_CONNECT:
-			/* Data stream */
-			clt->clt_toread = TOREAD_UNLIMITED;
-			bev->readcb = server_read;
-			break;
-		case HTTP_METHOD_GET:
-		case HTTP_METHOD_HEAD:
-		/* WebDAV methods */
-		case HTTP_METHOD_COPY:
-		case HTTP_METHOD_MOVE:
-			clt->clt_toread = 0;
-			break;
-		case HTTP_METHOD_DELETE:
-		case HTTP_METHOD_OPTIONS:
-		case HTTP_METHOD_POST:
-		case HTTP_METHOD_PUT:
-		case HTTP_METHOD_RESPONSE:
-		/* WebDAV methods */
-		case HTTP_METHOD_PROPFIND:
-		case HTTP_METHOD_PROPPATCH:
-		case HTTP_METHOD_MKCOL:
-		case HTTP_METHOD_LOCK:
-		case HTTP_METHOD_UNLOCK:
-		case HTTP_METHOD_VERSION_CONTROL:
-		case HTTP_METHOD_REPORT:
-		case HTTP_METHOD_CHECKOUT:
-		case HTTP_METHOD_CHECKIN:
-		case HTTP_METHOD_UNCHECKOUT:
-		case HTTP_METHOD_MKWORKSPACE:
-		case HTTP_METHOD_UPDATE:
-		case HTTP_METHOD_LABEL:
-		case HTTP_METHOD_MERGE:
-		case HTTP_METHOD_BASELINE_CONTROL:
-		case HTTP_METHOD_MKACTIVITY:
-		case HTTP_METHOD_ORDERPATCH:
-		case HTTP_METHOD_ACL:
-		case HTTP_METHOD_MKREDIRECTREF:
-		case HTTP_METHOD_UPDATEREDIRECTREF:
-		case HTTP_METHOD_SEARCH:
-		case HTTP_METHOD_PATCH:
-			/* HTTP request payload */
-			if (clt->clt_toread > 0)
-				bev->readcb = server_read_httpcontent;
-			if (clt->clt_toread < 0 && !desc->http_chunked)
-				/* 7. of RFC 9112 Section 6.3 */
-				clt->clt_toread = 0;
-			break;
-		default:
-			server_abort_http(clt, 405, "method not allowed");
-			return;
-		}
-		if (desc->http_chunked) {
-			/* Chunked transfer encoding */
-			clt->clt_toread = TOREAD_HTTP_CHUNK_LENGTH;
-			bev->readcb = server_read_httpchunks;
-		}
-
- done:
-		if (clt->clt_toread != 0)
-			bufferevent_disable(bev, EV_READ);
-		server_response(httpd_env, clt);
-		return;
-	}
 	if (clt->clt_done) {
 		server_close(clt, "done");
 		return;
 	}
-	if (EVBUFFER_LENGTH(src) && bev->readcb != server_read_http)
-		bev->readcb(bev, arg);
-	bufferevent_enable(bev, EV_READ);
 	return;
  fail:
 	server_abort_http(clt, 500, strerror(errno));
@@ -585,20 +199,18 @@ server_read_http3(struct bufferevent *bev, void *arg)
 }
 
 void
-server_read_httpcontent(struct bufferevent *bev, void *arg)
+server_read_http3content(int fd, void *arg)
 {
 	struct client		*clt = arg;
-	struct evbuffer		*src = EVBUFFER_INPUT(bev);
-	size_t			 size;
 
 	getmonotime(&clt->clt_tv_last);
 
-	size = EVBUFFER_LENGTH(src);
+/*
 	DPRINTF("%s: session %d: size %lu, to read %lld", __func__,
 	    clt->clt_id, size, clt->clt_toread);
-	if (!size)
-		return;
+*/
 
+/*
 	if (clt->clt_toread > 0) {
 		/* Read content data */
 		if ((off_t)size > clt->clt_toread) {
@@ -626,6 +238,7 @@ server_read_httpcontent(struct bufferevent *bev, void *arg)
 	if (bev->readcb != server_read_httpcontent)
 		bev->readcb(bev, arg);
 
+*/
 	return;
  done:
 	return;
@@ -634,120 +247,7 @@ server_read_httpcontent(struct bufferevent *bev, void *arg)
 }
 
 void
-server_read_httpchunks(struct bufferevent *bev, void *arg)
-{
-	struct client		*clt = arg;
-	struct evbuffer		*src = EVBUFFER_INPUT(bev);
-	char			*line;
-	long long		 llval;
-	size_t			 size;
-
-	getmonotime(&clt->clt_tv_last);
-
-	size = EVBUFFER_LENGTH(src);
-	DPRINTF("%s: session %d: size %lu, to read %lld", __func__,
-	    clt->clt_id, size, clt->clt_toread);
-	if (!size)
-		return;
-
-	if (clt->clt_toread > 0) {
-		/* Read chunk data */
-		if ((off_t)size > clt->clt_toread) {
-			size = clt->clt_toread;
-			if (server_bufferevent_write_chunk(clt, src, size)
-			    == -1)
-				goto fail;
-			clt->clt_toread = 0;
-		} else {
-			if (server_bufferevent_write_buffer(clt, src) == -1)
-				goto fail;
-			clt->clt_toread -= size;
-		}
-		DPRINTF("%s: done, size %lu, to read %lld", __func__,
-		    size, clt->clt_toread);
-	}
-	switch (clt->clt_toread) {
-	case TOREAD_HTTP_CHUNK_LENGTH:
-		line = evbuffer_readln(src, NULL, EVBUFFER_EOL_CRLF_STRICT);
-		if (line == NULL) {
-			/* Ignore empty line, continue */
-			bufferevent_enable(bev, EV_READ);
-			return;
-		}
-		if (strlen(line) == 0) {
-			free(line);
-			goto next;
-		}
-
-		/*
-		 * Read prepended chunk size in hex, ignore the trailer.
-		 * The returned signed value must not be negative.
-		 */
-		if (sscanf(line, "%llx", &llval) != 1 || llval < 0) {
-			free(line);
-			server_close(clt, "invalid chunk size");
-			return;
-		}
-
-		if (server_bufferevent_print(clt, line) == -1 ||
-		    server_bufferevent_print(clt, "\r\n") == -1) {
-			free(line);
-			goto fail;
-		}
-		free(line);
-
-		if ((clt->clt_toread = llval) == 0) {
-			DPRINTF("%s: last chunk", __func__);
-			clt->clt_toread = TOREAD_HTTP_CHUNK_TRAILER;
-		}
-		break;
-	case TOREAD_HTTP_CHUNK_TRAILER:
-		/* Last chunk is 0 bytes followed by trailer and empty line */
-		line = evbuffer_readln(src, NULL, EVBUFFER_EOL_CRLF_STRICT);
-		if (line == NULL) {
-			/* Ignore empty line, continue */
-			bufferevent_enable(bev, EV_READ);
-			return;
-		}
-		if (server_bufferevent_print(clt, line) == -1 ||
-		    server_bufferevent_print(clt, "\r\n") == -1) {
-			free(line);
-			goto fail;
-		}
-		if (strlen(line) == 0) {
-			/* Switch to HTTP header mode */
-			clt->clt_toread = TOREAD_HTTP_HEADER;
-			bev->readcb = server_read_http;
-		}
-		free(line);
-		break;
-	case 0:
-		/* Chunk is terminated by an empty newline */
-		line = evbuffer_readln(src, NULL, EVBUFFER_EOL_CRLF_STRICT);
-		free(line);
-		if (server_bufferevent_print(clt, "\r\n") == -1)
-			goto fail;
-		clt->clt_toread = TOREAD_HTTP_CHUNK_LENGTH;
-		break;
-	}
-
- next:
-	if (clt->clt_done)
-		goto done;
-	if (EVBUFFER_LENGTH(src))
-		bev->readcb(bev, arg);
-	bufferevent_enable(bev, EV_READ);
-	return;
-
- done:
-	server_close(clt, "last http chunk read (done)");
-	return;
- fail:
-	server_close(clt, strerror(errno));
-}
-
-void
-server_read_httprange(struct bufferevent *bev, void *arg)
+server_read_http3range(struct bufferevent *bev, void *arg)
 {
 	struct client		*clt = arg;
 	struct evbuffer		*src = EVBUFFER_INPUT(bev);
@@ -843,7 +343,7 @@ server_read_httprange(struct bufferevent *bev, void *arg)
 }
 
 void
-server_reset_http(struct client *clt)
+server_reset_http3(struct client *clt)
 {
 	struct server		*srv = clt->clt_srv;
 
@@ -865,7 +365,7 @@ server_reset_http(struct client *clt)
 }
 
 ssize_t
-server_http_time(time_t t, char *tmbuf, size_t len)
+server_http3_time(time_t t, char *tmbuf, size_t len)
 {
 	struct tm		 tm;
 
@@ -877,7 +377,7 @@ server_http_time(time_t t, char *tmbuf, size_t len)
 }
 
 const char *
-server_http_host(struct sockaddr_storage *ss, char *buf, size_t len)
+server_http3_host(struct sockaddr_storage *ss, char *buf, size_t len)
 {
 	char		hbuf[HOST_NAME_MAX+1];
 	in_port_t	port;
@@ -909,7 +409,7 @@ server_http_host(struct sockaddr_storage *ss, char *buf, size_t len)
 }
 
 char *
-server_http_parsehost(char *host, char *buf, size_t len, int *portval)
+server_http3_parsehost(char *host, char *buf, size_t len, int *portval)
 {
 	char		*start, *end, *port;
 	const char	*errstr = NULL;
@@ -958,7 +458,7 @@ server_http_parsehost(char *host, char *buf, size_t len, int *portval)
 }
 
 void
-server_abort_http(struct client *clt, unsigned int code, const char *msg)
+server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 {
 	struct server_config	*srv_conf = clt->clt_srv_conf;
 	struct bufferevent	*bev = clt->clt_bev;
@@ -1154,7 +654,7 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 }
 
 void
-server_close_http(struct client *clt)
+server_close_http3(struct client *clt)
 {
 	struct http_descriptor *desc;
 
@@ -1176,7 +676,7 @@ server_close_http(struct client *clt)
 }
 
 char *
-server_expand_http(struct client *clt, const char *val, char *buf,
+server_expand_http3(struct client *clt, const char *val, char *buf,
     size_t len)
 {
 	struct http_descriptor	*desc = clt->clt_descreq;
@@ -1338,279 +838,7 @@ server_expand_http(struct client *clt, const char *val, char *buf,
 }
 
 int
-server_response(struct httpd *httpd, struct client *clt)
-{
-	char			 path[PATH_MAX];
-	char			 hostname[HOST_NAME_MAX+1];
-	struct http_descriptor	*desc = clt->clt_descreq;
-	struct http_descriptor	*resp = clt->clt_descresp;
-	struct server		*srv = clt->clt_srv;
-	struct server_config	*srv_conf = &srv->srv_conf;
-	struct kv		*kv, key, *host;
-	struct str_find		 sm;
-	int			 portval = -1, ret;
-	char			*hostval, *query;
-	const char		*errstr = NULL;
-
-	/* Preserve original path */
-	if (desc->http_path == NULL ||
-	    (desc->http_path_orig = strdup(desc->http_path)) == NULL)
-		goto fail;
-
-	/* Decode the URL */
-	if (url_decode(desc->http_path) == NULL)
-		goto fail;
-
-	/* Canonicalize the request path */
-	if (canonicalize_path(desc->http_path, path, sizeof(path)) == NULL)
-		goto fail;
-	free(desc->http_path);
-	if ((desc->http_path = strdup(path)) == NULL)
-		goto fail;
-
-	key.kv_key = "Host";
-	if ((host = kv_find(&desc->http_headers, &key)) != NULL &&
-	    host->kv_value == NULL)
-		host = NULL;
-
-	if (strcmp(desc->http_version, "HTTP/1.1") == 0) {
-		/* Host header is mandatory */
-		if (host == NULL)
-			goto fail;
-
-		/* Is the connection persistent? */
-		key.kv_key = "Connection";
-		if ((kv = kv_find(&desc->http_headers, &key)) != NULL &&
-		    strcasecmp("close", kv->kv_value) == 0)
-			clt->clt_persist = 0;
-		else
-			clt->clt_persist++;
-	} else {
-		/* Is the connection persistent? */
-		key.kv_key = "Connection";
-		if ((kv = kv_find(&desc->http_headers, &key)) != NULL &&
-		    strcasecmp("keep-alive", kv->kv_value) == 0)
-			clt->clt_persist++;
-		else
-			clt->clt_persist = 0;
-	}
-
-	/*
-	 * Do we have a Host header and matching configuration?
-	 * XXX the Host can also appear in the URL path.
-	 */
-	if (host != NULL) {
-		if ((hostval = server_http_parsehost(host->kv_value,
-		    hostname, sizeof(hostname), &portval)) == NULL)
-			goto fail;
-
-		TAILQ_FOREACH(srv_conf, &srv->srv_hosts, entry) {
-#ifdef DEBUG
-			if ((srv_conf->flags & SRVFLAG_LOCATION) == 0) {
-				DPRINTF("%s: virtual host \"%s:%u\""
-				    " host \"%s\" (\"%s\")",
-				    __func__, srv_conf->name,
-				    ntohs(srv_conf->port), host->kv_value,
-				    hostname);
-			}
-#endif
-			if (srv_conf->flags & SRVFLAG_LOCATION)
-				continue;
-			else if (srv_conf->flags & SRVFLAG_SERVER_MATCH) {
-				str_find(hostname, srv_conf->name,
-				    &sm, 1, &errstr);
-				ret = errstr == NULL ? 0 : -1;
-			} else {
-				ret = fnmatch(srv_conf->name,
-				    hostname, FNM_CASEFOLD);
-			}
-			if (ret == 0 &&
-			    (portval == -1 || portval == srv_conf->port)) {
-				/* Replace host configuration */
-				clt->clt_srv_conf = srv_conf;
-				srv_conf = NULL;
-				break;
-			}
-		}
-	}
-
-	if (srv_conf != NULL) {
-		/* Use the actual server IP address */
-		if (server_http_host(&clt->clt_srv_ss, hostname,
-		    sizeof(hostname)) == NULL)
-			goto fail;
-	} else {
-		/* Host header was valid and found */
-		if (strlcpy(hostname, host->kv_value, sizeof(hostname)) >=
-		    sizeof(hostname))
-			goto fail;
-		srv_conf = clt->clt_srv_conf;
-	}
-
-	if (clt->clt_persist >= srv_conf->maxrequests)
-		clt->clt_persist = 0;
-
-	/* pipelining should end after the first "idempotent" method */
-	if (clt->clt_pipelining && clt->clt_toread > 0)
-		clt->clt_persist = 0;
-
-	if ((desc->http_host = strdup(hostname)) == NULL)
-		goto fail;
-
-	/* Now fill in the mandatory parts of the response descriptor */
-	resp->http_method = desc->http_method;
-	if ((resp->http_version = strdup(desc->http_version)) == NULL)
-		goto fail;
-
-	/* Now search for the location */
-	if ((srv_conf = server_getlocation(clt, desc->http_path)) == NULL) {
-		server_abort_http(clt, 500, desc->http_path);
-		return (-1);
-	}
-
-	/* Optional rewrite */
-	if (srv_conf->flags & SRVFLAG_PATH_REWRITE) {
-		/* Expand macros */
-		if (server_expand_http(clt, srv_conf->path,
-		    path, sizeof(path)) == NULL)
-			goto fail;
-
-		/*
-		 * Reset and update the query.  The updated query must already
-		 * be URL encoded - either specified by the user or by using the
-		 * original $QUERY_STRING.
-		 */
-		free(desc->http_query_alias);
-		desc->http_query_alias = NULL;
-		if ((query = strchr(path, '?')) != NULL) {
-			*query++ = '\0';
-			if ((desc->http_query_alias = strdup(query)) == NULL)
-				goto fail;
-		}
-
-		/* Canonicalize the updated request path */
-		if (canonicalize_path(path,
-		    path, sizeof(path)) == NULL)
-			goto fail;
-
-		log_debug("%s: rewrote %s?%s -> %s?%s", __func__,
-		    desc->http_path, desc->http_query ? desc->http_query : "",
-		    path, query ? query : "");
-
-		free(desc->http_path_alias);
-		if ((desc->http_path_alias = strdup(path)) == NULL)
-			goto fail;
-
-		/* Now search for the updated location */
-		if ((srv_conf = server_getlocation(clt,
-		    desc->http_path_alias)) == NULL) {
-			server_abort_http(clt, 500, desc->http_path_alias);
-			return (-1);
-		}
-	}
-
-	if (clt->clt_toread > 0 && (size_t)clt->clt_toread >
-	    srv_conf->maxrequestbody) {
-		server_abort_http(clt, 413, "request body too large");
-		return (-1);
-	}
-
-	if (srv_conf->flags & SRVFLAG_BLOCK) {
-		server_abort_http(clt, srv_conf->return_code,
-		    srv_conf->return_uri);
-		return (-1);
-	} else if (srv_conf->flags & SRVFLAG_AUTH &&
-	    server_http_authenticate(srv_conf, clt) == -1) {
-		server_abort_http(clt, 401, srv_conf->auth_realm);
-		return (-1);
-	} else
-		return (server_file(httpd, clt));
- fail:
-	server_abort_http(clt, 400, "bad request");
-	return (-1);
-}
-
-const char *
-server_root_strip(const char *path, int n)
-{
-	const char *p;
-
-	/* Strip strip leading directories. Leading '/' is ignored. */
-	for (; n > 0 && *path != '\0'; n--)
-		if ((p = strchr(++path, '/')) == NULL)
-			path = strchr(path, '\0');
-		else
-			path = p;
-
-	return (path);
-}
-
-struct server_config *
-server_getlocation(struct client *clt, const char *path)
-{
-	struct server		*srv = clt->clt_srv;
-	struct server_config	*srv_conf = clt->clt_srv_conf, *location;
-	const char		*errstr = NULL;
-	int			 ret;
-
-	/* Now search for the location */
-	TAILQ_FOREACH(location, &srv->srv_hosts, entry) {
-#ifdef DEBUG
-		if (location->flags & SRVFLAG_LOCATION) {
-			DPRINTF("%s: location \"%s\" path \"%s\"",
-			    __func__, location->location, path);
-		}
-#endif
-		if ((location->flags & SRVFLAG_LOCATION) &&
-		    location->parent_id == srv_conf->parent_id) {
-			errstr = NULL;
-			if (location->flags & SRVFLAG_LOCATION_MATCH) {
-				ret = str_match(path, location->location,
-				    &clt->clt_srv_match, &errstr);
-			} else {
-				ret = fnmatch(location->location,
-				    path, FNM_CASEFOLD);
-			}
-			if (ret == 0 && errstr == NULL) {
-				if ((ret = server_locationaccesstest(location,
-				    path)) == -1)
-					return (NULL);
-
-				if (ret)
-					continue;
-				/* Replace host configuration */
-				clt->clt_srv_conf = srv_conf = location;
-				break;
-			}
-		}
-	}
-
-	return (srv_conf);
-}
-
-int
-server_locationaccesstest(struct server_config *srv_conf, const char *path)
-{
-	int		 rootfd, ret;
-	struct stat	 sb;
-
-	if (((SRVFLAG_LOCATION_FOUND | SRVFLAG_LOCATION_NOT_FOUND) &
-	    srv_conf->flags) == 0)
-		return (0);
-
-	if ((rootfd = open(srv_conf->root, O_RDONLY)) == -1)
-		return (-1);
-
-	path = server_root_strip(path, srv_conf->strip) + 1;
-	if ((ret = faccessat(rootfd, path, R_OK, 0)) != -1)
-		ret = fstatat(rootfd, path, &sb, 0);
-	close(rootfd);
-	return ((ret == -1 && SRVFLAG_LOCATION_FOUND & srv_conf->flags) ||
-	    (ret == 0 && SRVFLAG_LOCATION_NOT_FOUND & srv_conf->flags));
-}
-
-int
-server_response_http(struct client *clt, unsigned int code,
+server_response_http3(struct client *clt, unsigned int code,
     struct media_type *media, off_t size, time_t mtime)
 {
 	struct server_config	*srv_conf = clt->clt_srv_conf;
@@ -1700,7 +928,7 @@ server_response_http(struct client *clt, unsigned int code,
 }
 
 int
-server_writeresponse_http(struct client *clt)
+server_writeresponse_http3(struct client *clt)
 {
 	struct http_descriptor	*desc = clt->clt_descresp;
 
@@ -1718,7 +946,7 @@ server_writeresponse_http(struct client *clt)
 }
 
 int
-server_writeheader_http(struct client *clt, struct kv *hdr, void *arg)
+server_writeheader_http3(struct client *clt, struct kv *hdr, void *arg)
 {
 	char			*ptr;
 	const char		*key;
@@ -1743,157 +971,7 @@ server_writeheader_http(struct client *clt, struct kv *hdr, void *arg)
 }
 
 int
-server_headers(struct client *clt, void *descp,
-    int (*hdr_cb)(struct client *, struct kv *, void *), void *arg)
-{
-	struct kv		*hdr, *kv;
-	struct http_descriptor	*desc = descp;
-
-	RB_FOREACH(hdr, kvtree, &desc->http_headers) {
-		if ((hdr_cb)(clt, hdr, arg) == -1)
-			return (-1);
-		TAILQ_FOREACH(kv, &hdr->kv_children, kv_entry) {
-			if ((hdr_cb)(clt, kv, arg) == -1)
-				return (-1);
-		}
-	}
-
-	return (0);
-}
-
-enum httpmethod
-server_httpmethod_byname(const char *name)
-{
-	enum httpmethod		 id = HTTP_METHOD_NONE;
-	struct http_method	 method, *res = NULL;
-
-	/* Set up key */
-	method.method_name = name;
-
-	if ((res = bsearch(&method, http_methods,
-	    sizeof(http_methods) / sizeof(http_methods[0]) - 1,
-	    sizeof(http_methods[0]), server_httpmethod_cmp)) != NULL)
-		id = res->method_id;
-
-	return (id);
-}
-
-const char *
-server_httpmethod_byid(unsigned int id)
-{
-	const char	*name = "<UNKNOWN>";
-	int		 i;
-
-	for (i = 0; http_methods[i].method_name != NULL; i++) {
-		if (http_methods[i].method_id == id) {
-			name = http_methods[i].method_name;
-			break;
-		}
-	}
-
-	return (name);
-}
-
-static int
-server_httpmethod_cmp(const void *a, const void *b)
-{
-	const struct http_method *ma = a;
-	const struct http_method *mb = b;
-
-	/*
-	 * RFC 2616 section 5.1.1 says that the method is case
-	 * sensitive so we don't do a strcasecmp here.
-	 */
-	return (strcmp(ma->method_name, mb->method_name));
-}
-
-const char *
-server_httperror_byid(unsigned int id)
-{
-	struct http_error	 error, *res;
-
-	/* Set up key */
-	error.error_code = (int)id;
-
-	if ((res = bsearch(&error, http_errors,
-	    sizeof(http_errors) / sizeof(http_errors[0]) - 1,
-	    sizeof(http_errors[0]), server_httperror_cmp)) != NULL)
-		return (res->error_name);
-
-	return (NULL);
-}
-
-static int
-server_httperror_cmp(const void *a, const void *b)
-{
-	const struct http_error *ea = a;
-	const struct http_error *eb = b;
-	return (ea->error_code - eb->error_code);
-}
-
-/*
- * return -1 on failure, strlen() of read file otherwise.
- * body is NULL on failure, contents of file with trailing \0 otherwise.
- */
-char *
-read_errdoc(const char *root, const char *file)
-{
-	struct stat	 sb;
-	char		*path;
-	int		 fd;
-	char		*ret;
-
-	if (asprintf(&path, "%s/%s.html", root, file) == -1)
-		fatal("asprintf");
-	if ((fd = open(path, O_RDONLY)) == -1) {
-		free(path);
-		if (errno != ENOENT)
-			log_warn("%s: open", __func__);
-		return (NULL);
-	}
-	free(path);
-	if (fstat(fd, &sb) < 0) {
-		log_warn("%s: stat", __func__);
-		close(fd);
-		return (NULL);
-	}
-
-	if ((ret = calloc(1, sb.st_size + 1)) == NULL)
-		fatal("calloc");
-	if (sb.st_size == 0) {
-		close(fd);
-		return (ret);
-	}
-	if (read(fd, ret, sb.st_size) != sb.st_size) {
-		log_warn("%s: read", __func__);
-		close(fd);
-		free(ret);
-		return (NULL);
-	}
-	close(fd);
-
-	return (ret);
-}
-
-char *
-replace_var(char *str, const char *var, const char *repl)
-{
-	char	*iv, *r;
-	size_t	 vlen;
-
-	vlen = strlen(var);
-	while ((iv = strstr(str, var)) != NULL) {
-		*iv = '\0';
-		if (asprintf(&r, "%s%s%s", str, repl, &iv[vlen]) == -1)
-			fatal("asprintf");
-		free(str);
-		str = r;
-	}
-	return (str);
-}
-
-int
-server_log_http(struct client *clt, unsigned int code, size_t len)
+server_log_http3(struct client *clt, unsigned int code, size_t len)
 {
 	static char		 tstamp[64];
 	static char		 ip[INET6_ADDRSTRLEN];

@@ -49,9 +49,6 @@
 static int	 server_httpmethod_cmp(const void *, const void *);
 static int	 server_httperror_cmp(const void *, const void *);
 void		 server_httpdesc_free(struct http_descriptor *);
-void		 server_http3conn_free(struct client *);
-void		 server_read_http3(struct bufferevent *bev, void *arg)
-{
 int		 server_http_authenticate(struct server_config *,
 		    struct client *);
 static int	 http_version_num(char *);
@@ -82,117 +79,6 @@ server_http_init(struct server *srv)
 {
 	/* nothing */
 }
-
-#ifdef HAVE_NETINET_QUIC_H
-int
-server_http3conn_init(struct client *clt)
-{
-	int64_t ctrl_sid, qpk_enc_sid, qpk_dec_sid;
-	struct quic_transport_param param = {};
-	nghttp3_callbacks callbacks = {
-		http_acked_stream_data,
-		http_stream_close,
-		http_recv_data,
-		http_deferred_consume,
-		http_server_begin_headers,
-		http_server_recv_header,
-		http_end_headers,
-		http_begin_trailers,
-		http_recv_trailer,
-		http_end_trailers,
-		http_stop_sending,
-		http_server_end_stream,
-		http_reset_stream,
-		http_shutdown,
-		http_recv_settings,
-	};
-	struct quic_stream_info si;
-	socklen_t len = sizeof(si);
-	nghttp3_settings settings;
-	unsigned int plen;
-	int ret;
-
-	memset(req, 0, sizeof(*req));
-	nghttp3_settings_default(&settings);
-	settings.qpack_blocked_streams = 100;
-	settings.qpack_max_dtable_capacity = 4096;
-
-	if (nghttp3_conn_server_new(&(clt->httpconn), &callbacks, &settings,
-	    NULL, req))
-		return (-1);
-
-	plen = sizeof(param);
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_TRANSPORT_PARAM, &param,
-	    &plen) == -1) {
-		http_log_error("socket getsockopt remote transport param\n");
-		return (-1);
-	}
-	nghttp3_conn_set_max_client_streams_bidi(clt->httpconn,
-	    param.max_streams_bidi);
-
-	si.stream_id = -1;
-	si.stream_flags = MSG_STREAM_UNI;
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len)) {
-		http_log_error("socket getsockopt stream_open ctrl failed\n");
-		return (-1);
-	}
-	ctrl_sid = si.stream_id;
-	if (nghttp3_conn_bind_control_stream(clt->httpconn, ctrl_sid))
-		return (-1);
-	http_log_debug("%s ctrl_stream_id %llu\n", __func__, ctrl_sid);
-
-	si.stream_id = -1;
-	si.stream_flags = MSG_STREAM_UNI;
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len)) {
-		http_log_error("socket getsockopt stream_open enc failed\n");
-		return (-1);
-	}
-	qpk_enc_sid = si.stream_id;
-	http_log_debug("%s qpack_enc_stream_id %llu\n", __func__, qpk_enc_sid);
-
-	si.stream_id = -1;
-	si.stream_flags = MSG_STREAM_UNI;
-	if(getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len)) {
-		http_log_error("socket getsockopt stream_open dec failed\n");
-		return (-1);
-	}
-	qpk_dec_sid = si.stream_id;
-	http_log_debug("%s qpack_dec_stream_id %llu\n", __func__, qpk_dec_sid);
-	if (nghttp3_conn_bind_qpack_streams(clt->httpconn, qpk_enc_sid,
-	    qpk_dec_sid))
-		return (-1);
-	return (0);
-}
-
-void
-server_http3conn_free(struct client *clt)
-{
-        nghttp3_conn_del(&(clt->httpconn));
-}
-
-void
-server_read_http3(struct bufferevent *bev, void *arg)
-{
-	int64_t stream_id = -1;
-	int32_t flags = 0;
-	int ret;
-	char buf[FCGI_CONTENT_SIZE];
-	while (1) {
-		ret = quic_recvmsg(sockfd, &buf, sizeof(buf), &stream_id, &flags
-		);
-		if (ret <= 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-		return 0;
-		return -1;
-		}
-		s);
-		ret = nghttp3_conn_read_stream(httpconn, stream_id, buf, ret,
-		flags & MSG_STREAM_FIN);
-		if (ret < 0)
-		return -1;
-	}
-}
-#endif
 
 int
 server_httpdesc_init(struct client *clt)

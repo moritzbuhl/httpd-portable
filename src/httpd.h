@@ -681,8 +681,9 @@ SPLAY_PROTOTYPE(client_tree, client, clt_nodes, server_client_cmp);
 void	 server_http_init(struct server *);
 void	 server_http(void);
 int	 server_httpdesc_init(struct client *);
-int	 server_http3conn_init(struct client *);
 void	 server_read_http(struct bufferevent *, void *);
+void	 server_read_http3(int, void *);
+int	 server_http3conn_init(struct client *);
 void	 server_abort_http(struct client *, unsigned int, const char *);
 unsigned int
 	 server_httpmethod_byname(const char *);
