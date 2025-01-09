@@ -1,6 +1,7 @@
-/*	$OpenBSD: server_http.c,v 1.156 2025/11/28 16:10:00 rsadowski Exp $	*/
+/*	$$	*/
 
 /*
+ * Copyright (c) 2024 Moritz Buhl <mbuhl@openbsd.org>
  * Copyright (c) 2020 Matthias Pressfreund <mpfr@fn.de>
  * Copyright (c) 2006 - 2018 Reyk Floeter <reyk@openbsd.org>
  *
@@ -46,12 +47,9 @@
 #include "http.h"
 #include "patterns.h"
 
-static int	 server_httpmethod_cmp(const void *, const void *);
+static int	 server_http3method_cmp(const void *, const void *);
 static int	 server_httperror_cmp(const void *, const void *);
 void		 server_httpdesc_free(struct http_descriptor *);
-void		 server_http3conn_free(struct client *);
-void		 server_read_http3(struct bufferevent *bev, void *arg)
-{
 int		 server_http_authenticate(struct server_config *,
 		    struct client *);
 static int	 http_version_num(char *);
@@ -66,28 +64,17 @@ static struct http_error	 http_errors[] = HTTP_ERRORS;
 void
 server_http(void)
 {
-	DPRINTF("%s: sorting lookup tables, pid %d", __func__, getpid());
-
-	/* Sort the HTTP lookup arrays */
-	qsort(http_methods, sizeof(http_methods) /
-	    sizeof(http_methods[0]) - 1,
-	    sizeof(http_methods[0]), server_httpmethod_cmp);
-	qsort(http_errors, sizeof(http_errors) /
-	    sizeof(http_errors[0]) - 1,
-	    sizeof(http_errors[0]), server_httperror_cmp);
 }
 
 void
-server_http_init(struct server *srv)
+server_http3_init(struct server *srv)
 {
 	/* nothing */
 }
 
-#ifdef HAVE_NETINET_QUIC_H
-int
 server_http3conn_init(struct client *clt)
 {
-	int64_t ctrl_sid, qpk_enc_sid, qpk_dec_sid;
+	int64_t ctrl_stream_id, qpack_enc_stream_id, qpack_dec_stream_id;
 	struct quic_transport_param param = {};
 	nghttp3_callbacks callbacks = {
 		http_acked_stream_data,
@@ -111,14 +98,26 @@ server_http3conn_init(struct client *clt)
 	nghttp3_settings settings;
 	unsigned int plen;
 	int ret;
+        struct http_descriptor *desc;
+
+        if ((desc = calloc(1, sizeof(*desc))) == NULL)
+                return (-1);
+        RB_INIT(&desc->http_headers);
+        clt->clt_descreq = desc;
+
+        if ((desc = calloc(1, sizeof(*desc))) == NULL) {
+                /* req will be cleaned up later */
+                return (-1);
+        }
+        RB_INIT(&desc->http_headers);
+        clt->clt_descresp = desc;
 
 	memset(req, 0, sizeof(*req));
 	nghttp3_settings_default(&settings);
 	settings.qpack_blocked_streams = 100;
 	settings.qpack_max_dtable_capacity = 4096;
 
-	if (nghttp3_conn_server_new(&(clt->httpconn), &callbacks, &settings,
-	    NULL, req))
+	if (nghttp3_conn_server_new(&(clt->httpconn), &callbacks, &settings, NULL, req))
 		return (-1);
 
 	plen = sizeof(param);
@@ -136,10 +135,10 @@ server_http3conn_init(struct client *clt)
 		http_log_error("socket getsockopt stream_open ctrl failed\n");
 		return (-1);
 	}
-	ctrl_sid = si.stream_id;
-	if (nghttp3_conn_bind_control_stream(clt->httpconn, ctrl_sid))
+	ctrl_stream_id = si.stream_id;
+	if (nghttp3_conn_bind_control_stream(clt->httpconn, ctrl_stream_id))
 		return (-1);
-	http_log_debug("%s ctrl_stream_id %llu\n", __func__, ctrl_sid);
+	http_log_debug("%s ctrl_stream_id %llu\n", __func__, ctrl_stream_id);
 
 	si.stream_id = -1;
 	si.stream_flags = MSG_STREAM_UNI;
@@ -147,8 +146,8 @@ server_http3conn_init(struct client *clt)
 		http_log_error("socket getsockopt stream_open enc failed\n");
 		return (-1);
 	}
-	qpk_enc_sid = si.stream_id;
-	http_log_debug("%s qpack_enc_stream_id %llu\n", __func__, qpk_enc_sid);
+	qpack_enc_stream_id = si.stream_id;
+	http_log_debug("%s qpack_enc_stream_id %llu\n", __func__, qpack_enc_stream_id);
 
 	si.stream_id = -1;
 	si.stream_flags = MSG_STREAM_UNI;
@@ -156,10 +155,10 @@ server_http3conn_init(struct client *clt)
 		http_log_error("socket getsockopt stream_open dec failed\n");
 		return (-1);
 	}
-	qpk_dec_sid = si.stream_id;
-	http_log_debug("%s qpack_dec_stream_id %llu\n", __func__, qpk_dec_sid);
-	if (nghttp3_conn_bind_qpack_streams(clt->httpconn, qpk_enc_sid,
-	    qpk_dec_sid))
+	qpack_dec_stream_id = si.stream_id;
+	http_log_debug("%s qpack_dec_stream_id %llu\n", __func__, qpack_dec_stream_id);
+	if (nghttp3_conn_bind_qpack_streams(clt->httpconn, qpack_enc_stream_id,
+	    qpack_dec_stream_id))
 		return (-1);
 	return (0);
 }
@@ -168,50 +167,6 @@ void
 server_http3conn_free(struct client *clt)
 {
         nghttp3_conn_del(&(clt->httpconn));
-}
-
-void
-server_read_http3(struct bufferevent *bev, void *arg)
-{
-	int64_t stream_id = -1;
-	int32_t flags = 0;
-	int ret;
-	char buf[FCGI_CONTENT_SIZE];
-	while (1) {
-		ret = quic_recvmsg(sockfd, &buf, sizeof(buf), &stream_id, &flags
-		);
-		if (ret <= 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK)
-		return 0;
-		return -1;
-		}
-		s);
-		ret = nghttp3_conn_read_stream(httpconn, stream_id, buf, ret,
-		flags & MSG_STREAM_FIN);
-		if (ret < 0)
-		return -1;
-	}
-}
-#endif
-
-int
-server_httpdesc_init(struct client *clt)
-{
-	struct http_descriptor	*desc;
-
-	if ((desc = calloc(1, sizeof(*desc))) == NULL)
-		return (-1);
-	RB_INIT(&desc->http_headers);
-	clt->clt_descreq = desc;
-
-	if ((desc = calloc(1, sizeof(*desc))) == NULL) {
-		/* req will be cleaned up later */
-		return (-1);
-	}
-	RB_INIT(&desc->http_headers);
-	clt->clt_descresp = desc;
-
-	return (0);
 }
 
 void
@@ -337,7 +292,7 @@ http_version_num(char *version)
 }
 
 void
-server_read_http(struct bufferevent *bev, void *arg)
+server_read_http3(struct bufferevent *bev, void *arg)
 {
 	struct client		*clt = arg;
 	struct http_descriptor	*desc = clt->clt_descreq;
@@ -358,6 +313,11 @@ server_read_http(struct bufferevent *bev, void *arg)
 		clt->clt_toread = TOREAD_HTTP_HEADER;
 		goto done;
 	}
+
+	if (nghttp3_conn_read_stream(httpconn, stream_id, buf, ret,
+				       flags & MSG_STREAM_FIN);
+	if (ret < 0)
+		return -1;
 
 	while (!clt->clt_headersdone) {
 		if (!clt->clt_line) {
@@ -889,6 +849,7 @@ server_reset_http(struct client *clt)
 
 	server_log(clt, NULL);
 
+	server_http3conn_free(clt->clt_h3conn);
 	server_httpdesc_free(clt->clt_descreq);
 	server_httpdesc_free(clt->clt_descresp);
 	clt->clt_headerlen = 0;
@@ -1006,7 +967,6 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 	char			*httpmsg, *body = NULL, *extraheader = NULL;
 	char			 tmbuf[32], hbuf[128], *hstsheader = NULL;
 	char			*clenheader = NULL;
-	char			*bannerheader = NULL, *bannertoken = NULL;
 	char			 buf[IBUF_READ_SIZE];
 	char			*escapedmsg = NULL;
 	char			 cstr[5];
@@ -1098,11 +1058,7 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 
 	body = replace_var(body, "$HTTP_ERROR", httperr);
 	body = replace_var(body, "$RESPONSE_CODE", cstr);
-	/* Check if server banner is suppressed */
-	if ((srv_conf->flags & SRVFLAG_NO_BANNER) == 0)
-		body = replace_var(body, "$SERVER_SOFTWARE", HTTPD_SERVERNAME);
-	else
-		body = replace_var(body, "$SERVER_SOFTWARE", "");
+	body = replace_var(body, "$SERVER_SOFTWARE", HTTPD_SERVERNAME);
 	bodylen = strlen(body);
 	goto send;
 
@@ -1115,14 +1071,6 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 	    "body { background-color: #1E1F21; color: #EEEFF1; }\n"
 	    "a { color: #BAD7FF; }\n}";
 
-	/* If banner is suppressed, don't write it to the error document */
-	if ((srv_conf->flags & SRVFLAG_NO_BANNER) == 0)
-		if (asprintf(&bannertoken, "<hr>\n<address>%s</address>\n",
-		    HTTPD_SERVERNAME) == -1) {
-			bannertoken = NULL;
-			goto done;
-		}
-
 	/* Generate simple HTML error document */
 	if ((bodylen = asprintf(&body,
 	    "<!DOCTYPE html>\n"
@@ -1134,11 +1082,10 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 	    "</head>\n"
 	    "<body>\n"
 	    "<h1>%03d %s</h1>\n"
-	    "%s"
+	    "<hr>\n<address>%s</address>\n"
 	    "</body>\n"
 	    "</html>\n",
-	    code, httperr, style, code, httperr,
-	    bannertoken == NULL ? "" : bannertoken)) == -1) {
+	    code, httperr, style, code, httperr, HTTPD_SERVERNAME)) == -1) {
 		body = NULL;
 		goto done;
 	}
@@ -1167,19 +1114,11 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 		}
 	}
 
-	/* If banner is suppressed, don't write a Server header */
-	if ((srv_conf->flags & SRVFLAG_NO_BANNER) == 0)
-		if (asprintf(&bannerheader, "Server: %s\r\n",
-		    HTTPD_SERVERNAME) == -1) {
-			bannerheader = NULL;
-			goto done;
-		}
-
 	/* Add basic HTTP headers */
 	if (asprintf(&httpmsg,
 	    "HTTP/1.0 %03d %s\r\n"
 	    "Date: %s\r\n"
-	    "%s"
+	    "Server: %s\r\n"
 	    "Connection: close\r\n"
 	    "Content-Type: text/html\r\n"
 	    "%s"
@@ -1187,8 +1126,7 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 	    "%s"
 	    "\r\n"
 	    "%s",
-	    code, httperr, tmbuf,
-	    bannerheader == NULL ? "" : bannerheader,
+	    code, httperr, tmbuf, HTTPD_SERVERNAME,
 	    clenheader == NULL ? "" : clenheader,
 	    extraheader == NULL ? "" : extraheader,
 	    hstsheader == NULL ? "" : hstsheader,
@@ -1205,8 +1143,6 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 	free(extraheader);
 	free(hstsheader);
 	free(clenheader);
-	free(bannerheader);
-	free(bannertoken);
 	if (msg == NULL)
 		msg = "\"\"";
 	if (asprintf(&httpmsg, "%s (%03d %s)", msg, code, httperr) == -1) {
@@ -1222,6 +1158,8 @@ server_close_http(struct client *clt)
 {
 	struct http_descriptor *desc;
 
+	server_http3conn_free(clt->clt_h3conn);
+	clt->clt_h3conn = NULL;
 	desc = clt->clt_descreq;
 	server_httpdesc_free(desc);
 	free(desc);
@@ -1509,11 +1447,6 @@ server_response(struct httpd *httpd, struct client *clt)
 		srv_conf = clt->clt_srv_conf;
 	}
 
-
-	/* Set request timeout from matching host configuration. */
-	bufferevent_settimeout(clt->clt_bev,
-	    srv_conf->requesttimeout.tv_sec, srv_conf->requesttimeout.tv_sec);
-
 	if (clt->clt_persist >= srv_conf->maxrequests)
 		clt->clt_persist = 0;
 
@@ -1699,12 +1632,10 @@ server_response_http(struct client *clt, unsigned int code,
 	    kv_set(&resp->http_pathquery, "%s", error) == -1)
 		return (-1);
 
-	/* Add server banner header to response unless suppressed */
-	if ((srv_conf->flags & SRVFLAG_NO_BANNER) == 0) {
-		if (kv_add(&resp->http_headers, "Server",
-		    HTTPD_SERVERNAME) == NULL)
-			return (-1);
-	}
+	/* Add headers */
+	if (kv_add(&resp->http_headers, "Server", HTTPD_SERVERNAME) == NULL)
+		return (-1);
+
 	/* Is it a persistent connection? */
 	if (clt->clt_persist) {
 		if (kv_add(&resp->http_headers,

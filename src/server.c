@@ -25,7 +25,10 @@
 #include <sys/tree.h>
 
 #include <netinet/in.h>
+
+#ifdef HAVE_NETINET_QUIC_H
 #include <netinet/quic.h>
+#endif
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 
@@ -65,8 +68,11 @@ int		 server_socket_listen(struct sockaddr_storage *, in_port_t,
 		    struct server_config *);
 struct server	*server_byid(uint32_t);
 
+#ifdef HAVE_NETINET_QUIC_H
 int		 server_quic_init(struct server *);
 void		 server_quic_handshake(int, short, void *);
+void		 server_quic_ev_switch(int, short, void *);
+#endif
 
 int		 server_tls_init(struct server *);
 void		 server_tls_readcb(int, short, void *);
@@ -161,6 +167,7 @@ server_privinit(struct server *srv)
 	return (0);
 }
 
+#ifdef HAVE_NETINET_QUIC_H
 int
 server_quic_init(struct server *srv)
 {
@@ -177,6 +184,7 @@ server_quic_init(struct server *srv)
 
 	return (0);
 }
+#endif
 
 int
 server_tls_cmp(struct server *s1, struct server *s2)
@@ -205,8 +213,10 @@ server_tls_cmp(struct server *s1, struct server *s2)
 int
 server_tls_load_keypair(struct server *srv)
 {
+#ifdef HAVE_NETINET_QUIC_H
 	if ((srv->srv_conf.flags & (SRVFLAG_TLS | SRVFLAG_QUIC)) == 0)
 		return (0);
+#endif
 
 	if ((srv->srv_conf.tls_cert = tls_load_file(srv->srv_conf.tls_cert_file,
 	    &srv->srv_conf.tls_cert_len, NULL)) == NULL)
@@ -467,7 +477,9 @@ server_launch(void)
 		    srv->srv_conf.name);
 
 		server_tls_init(srv);
+#ifdef HAVE_NETINET_QUIC_H
 		server_quic_init(srv);
+#endif
 		server_http_init(srv);
 
 		log_debug("%s: running server %s", __func__,
@@ -702,9 +714,11 @@ server_socket(struct sockaddr_storage *ss, in_port_t port,
 
 	if (fd != -1)
 		s = fd;
+#ifdef HAVE_NETINET_QUIC_H
 	else if (srv_conf->flags & SRVFLAG_QUIC)
 		s = socket(ss->ss_family, SOCK_DGRAM | SOCK_NONBLOCK,
 		    IPPROTO_QUIC);
+#endif
 	else
 		s = socket(ss->ss_family, SOCK_STREAM | SOCK_NONBLOCK,
 		    IPPROTO_TCP);
@@ -811,6 +825,7 @@ server_socket_listen(struct sockaddr_storage *ss, in_port_t port,
 
 	if (bind(s, (struct sockaddr *)ss, SS_LEN(ss)) == -1)
 		goto bad;
+#ifdef HAVE_NETINET_QUIC_H
 	if (srv_conf->flags & SRVFLAG_QUIC) {
 		struct quic_transport_param tp;
 		char *alpn = H3_ALPN;
@@ -823,7 +838,9 @@ server_socket_listen(struct sockaddr_storage *ss, in_port_t port,
 		if (setsockopt(s, SOL_QUIC, QUIC_SOCKOPT_ALPN, alpn,
 		    strlen(alpn)))
 			goto bad;
+		srv_conf->tcpbacklog = 1; // XXX: backlog of 0 disables listen
 	}
+#endif
 	if (listen(s, srv_conf->tcpbacklog) == -1)
 		goto bad;
 
@@ -1002,6 +1019,15 @@ server_input(struct client *clt)
 	/*
 	 * Client <-> Server
 	 */
+#ifdef HAVE_NETINET_QUIC_H
+	if (srv_conf->flags & SRVFLAG_QUIC) {
+		event_del(&clt->clt_ev);
+		event_set(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
+		    EV_WRITE | EV_PERSIST, XXX, clt);
+		event_add(ev, &srv->srv_conf.timeout);
+		return;
+	}
+#endif
 	clt->clt_bev = bufferevent_new(clt->clt_s, inrd, inwr,
 	    server_error, clt);
 	if (clt->clt_bev == NULL) {
@@ -1014,9 +1040,6 @@ server_input(struct client *clt)
 		    server_tls_readcb, clt->clt_bev);
 		event_set(&clt->clt_bev->ev_write, clt->clt_s, EV_WRITE,
 		    server_tls_writecb, clt->clt_bev);
-	}
-	if (srv_conf->flags & SRVFLAG_QUIC) {
-		/* XXX */
 	}
 
 	/* Adjust write watermark to the socket buffer output size */
@@ -1241,6 +1264,7 @@ server_accept(int fd, short event, void *arg)
 		    server_tls_handshake, &clt->clt_tv_start,
 		    &srv->srv_conf.timeout, clt);
 		return;
+#ifdef HAVE_NETINET_QUIC_H
 	} else if (srv->srv_conf.flags & SRVFLAG_QUIC) {
 		if ((clt->clt_quic_ctx = quic_server_session_init(clt->clt_s,
 		    srv->srv_quic_ctx, H3_ALPN)) == NULL) {
@@ -1251,6 +1275,7 @@ server_accept(int fd, short event, void *arg)
 		    server_quic_handshake, &clt->clt_tv_start,
 		    &srv->srv_conf.timeout, clt);
 		return;
+#endif
 	}
 
 	server_input(clt);
@@ -1268,6 +1293,7 @@ server_accept(int fd, short event, void *arg)
 	}
 }
 
+#ifdef HAVE_NETINET_QUIC_H
 void
 server_quic_handshake(int fd, short event, void *arg)
 {
@@ -1299,6 +1325,26 @@ server_quic_handshake(int fd, short event, void *arg)
 		server_close(clt, "quic handshake failed");
 	}
 }
+
+void
+server_quic_ev_switch(int fd, short event, void *arg)
+{
+	struct client *clt = (struct client *)arg;
+	struct server *srv = (struct server *)clt->clt_srv;
+	int ret;
+
+	switch(event) {
+	case EV_TIMEOUT:
+		server_close(clt, "quic timeout");
+		break;
+	case EV_READ:
+		server_read_http3
+		break;
+	case EV_WRITE:
+		break;
+	}
+}
+#endif
 
 void
 server_tls_handshake(int fd, short event, void *arg)
