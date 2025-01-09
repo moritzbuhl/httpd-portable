@@ -89,8 +89,7 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 	)
 endif()
 
-set(WANT_QUIC 1) # XXX
-if(WANT_QUIC)
+if(HAVE_NETINET_QUIC_H)
 	list(APPEND LIBS
 		quic
 	)
