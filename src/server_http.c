@@ -54,8 +54,6 @@ int		 server_http_authenticate(struct server_config *,
 static int	 http_version_num(char *);
 char		*server_expand_http(struct client *, const char *,
 		    char *, size_t);
-char		*replace_var(char *, const char *, const char *);
-char		*read_errdoc(const char *, const char *);
 
 static struct http_method	 http_methods[] = HTTP_METHODS;
 static struct http_error	 http_errors[] = HTTP_ERRORS;

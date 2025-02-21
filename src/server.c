@@ -1333,8 +1333,6 @@ void
 server_quic_ev_switch(int fd, short event, void *arg)
 {
 	struct client *clt = (struct client *)arg;
-	struct server *srv = (struct server *)clt->clt_srv;
-	int ret;
 
 	if (event & EV_TIMEOUT) {
 		server_close(clt, "quic timeout");
