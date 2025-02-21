@@ -682,8 +682,6 @@ void	 server_http_init(struct server *);
 void	 server_http(void);
 int	 server_httpdesc_init(struct client *);
 void	 server_read_http(struct bufferevent *, void *);
-void	 server_read_http3(int, void *);
-int	 server_http3conn_init(struct client *);
 void	 server_abort_http(struct client *, unsigned int, const char *);
 unsigned int
 	 server_httpmethod_byname(const char *);
@@ -713,6 +711,15 @@ const char *
 char	*server_http_parsehost(char *, char *, size_t, int *);
 ssize_t	 server_http_time(time_t, char *, size_t);
 int	 server_log_http(struct client *, unsigned int, size_t);
+char	*replace_var(char *, const char *, const char *);
+char	*read_errdoc(const char *, const char *);
+
+/* server_http3.c */
+void	 server_http3(void);
+void	 server_read_http3(int, void *);
+int	 server_http3conn_init(struct client *);
+void	 server_reset_http3(struct client *);
+void	 server_read_http3content(int fd, void *);
 
 /* server_file.c */
 int	 server_file(struct httpd *, struct client *);
