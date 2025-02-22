@@ -53,11 +53,182 @@ void		 server_http3conn_free(struct client *);
 void		 server_abort_http3(struct client *, unsigned int,
 		    const char *);
 void		 server_close_http3(struct client *);
+int		 server_response3(struct httpd *, struct client *);
 int		 server_response_http3(struct client *, unsigned int,
 		    struct media_type *, off_t, time_t);
 int		 server_http_authenticate(struct server_config *,
 		    struct client *);
 void		 server_read_http3range(struct bufferevent *, void *);
+
+static int
+h3_acked_stream_data(nghttp3_conn *conn, int64_t stream_id, uint64_t datalen, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_stream_close(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_deferred_consume(nghttp3_conn *conn, int64_t stream_id, size_t nconsumed, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
+{
+	struct client		*clt = arg;
+	struct http_descriptor	*desc = clt->clt_descreq;
+	char			*key = NULL;
+	char			*val = NULL;
+	struct kv		*hdr = NULL;
+	nghttp3_vec		 k = nghttp3_rcbuf_get_buf(name);
+	nghttp3_vec		 v = nghttp3_rcbuf_get_buf(value);
+
+	log_debug("%s: sid=%lld %.*s: %.*s", __func__, stream_id, (int)k.len,
+	    k.base, (int)v.len, v.base);
+
+	/* XXX: don't do this for every header? */
+	if (asprintf(&val, "%.*s", (int)v.len, v.base) == -1) {
+		log_warn("asprintf");
+		return (-1);
+	}
+	
+	switch (token) {
+	case NGHTTP3_QPACK_TOKEN__METHOD:
+		if ((desc->http_method = server_httpmethod_byname(val))
+		    == HTTP_METHOD_NONE) {
+			/* XXX server_abort_http3(clt, 400, "malformed"); */
+			return (-1);
+		}
+		free(val);
+		break;
+	case NGHTTP3_QPACK_TOKEN__PATH:
+		desc->http_path = val;
+		break;
+	case NGHTTP3_QPACK_TOKEN_CONTENT_LENGTH:
+		if (desc->http_method == HTTP_METHOD_TRACE ||
+		    desc->http_method == HTTP_METHOD_CONNECT)
+			server_abort_http(clt, 400, "malformed");
+		/* FALLTHROUGH */
+	default:
+		if (asprintf(&key, "%.*s", (int)k.len, k.base) == -1) {
+			log_warn("asprintf");
+			return (-1);
+		}
+
+		if ((hdr = kv_add(&desc->http_headers, key, val)) == NULL)
+			return (-1);
+	}
+
+	return 0;
+}
+
+static int
+h3_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *sarg)
+{
+	struct client		*clt = arg;
+	struct http_descriptor  *desc = clt->clt_descreq;
+
+	log_debug("%s", __func__);
+	if (desc->http_method == HTTP_METHOD_NONE)
+		return (-1);
+	if (desc->http_path == NULL)
+		return (-1);
+	if ((desc->http_version = strdup("HTTP/3")) == NULL)
+		return (-1);
+
+	clt->clt_headersdone = 1;
+	return 0;
+}
+
+static int
+h3_begin_trailers(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_recv_trailer(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_end_trailers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_stop_sending(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_reset_stream(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings, void *arg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_shutdown(nghttp3_conn *conn, int64_t id, void *arg)
+{
+	log_debug("%s", __func__);
+	return 0;
+}
+
+static int
+h3_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data, size_t datalen, void *arg, void *sarg)
+{
+	static size_t total;
+	int i;
+
+	for (i = 0; i < datalen; i++)
+		log_info("%c", data[i]);
+
+	total += datalen;
+	log_debug("");
+	log_debug("%s: %lu", __func__, total);
+	return 0;
+}
+
+static int
+h3_end_stream(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
+{
+	struct client		*clt = arg;
+
+	log_debug("%s", __func__);
+	server_response3(httpd_env, clt);
+	return 0;
+}
 
 void
 server_http3(void)
@@ -65,99 +236,104 @@ server_http3(void)
 	/* nothing */
 }
 
+static int64_t
+stream_open(int s, uint32_t flags) {
+	struct quic_stream_info si;
+	socklen_t len = sizeof(si);
+
+	si.stream_id = -1;
+	si.stream_flags = flags;
+	if(getsockopt(s, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len))
+		return (-1);
+	return si.stream_id;
+}
+
 int
 server_http3conn_init(struct client *clt)
 {
-	int64_t ctrl_sid, qpk_enc_sid, qpk_dec_sid;
-	struct quic_transport_param param = {};
+	int64_t ctrl, enc, dec;
+	struct quic_transport_param param;
 	nghttp3_callbacks callbacks = {
-/*
-		http_acked_stream_data,
-		http_stream_close,
-		http_recv_data,
-		http_deferred_consume,
-		http_server_begin_headers,
-		http_server_recv_header,
-		http_end_headers,
-		http_begin_trailers,
-		http_recv_trailer,
-		http_end_trailers,
-		http_stop_sending,
-		http_server_end_stream,
-		http_reset_stream,
-		http_shutdown,
-		http_recv_settings,
-*/
+		h3_acked_stream_data,
+		h3_stream_close,
+		h3_recv_data,
+		h3_deferred_consume,
+		h3_begin_headers,
+		h3_recv_header,
+		h3_end_headers,
+		h3_begin_trailers,
+		h3_recv_trailer,
+		h3_end_trailers,
+		h3_stop_sending,
+		h3_end_stream,
+		h3_reset_stream,
+		h3_shutdown,
+		h3_recv_settings,
 	};
-	struct quic_stream_info si;
-	socklen_t len = sizeof(si);
 	nghttp3_settings settings;
 	unsigned int plen;
 
+	memset(&param, 0, sizeof(param));
 	nghttp3_settings_default(&settings);
 	settings.qpack_blocked_streams = 100;
 	settings.qpack_max_dtable_capacity = 4096;
 
 	if (nghttp3_conn_server_new(&(clt->clt_h3conn), &callbacks, &settings,
-	    NULL, NULL))
+	    NULL, clt))
 		return (-1);
 
-/*
 	plen = sizeof(param);
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_TRANSPORT_PARAM, &param,
-	    &plen) == -1) {
-		http_log_error("socket getsockopt remote transport param\n");
+	if (getsockopt(clt->clt_s, SOL_QUIC, QUIC_SOCKOPT_TRANSPORT_PARAM,
+	    &param, &plen) == -1) {
+		log_warn("socket getsockopt remote transport param");
 		return (-1);
 	}
 	nghttp3_conn_set_max_client_streams_bidi(clt->clt_h3conn,
 	    param.max_streams_bidi);
 
-	si.stream_id = -1;
-	si.stream_flags = MSG_STREAM_UNI;
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len)) {
-		http_log_error("socket getsockopt stream_open ctrl failed\n");
+	
+	if ((ctrl = stream_open(clt->clt_s, MSG_STREAM_UNI)) == -1) {
+		log_warn("stream_open ctrl");
 		return (-1);
 	}
-	ctrl_sid = si.stream_id;
-	if (nghttp3_conn_bind_control_stream(clt->clt_h3conn, ctrl_sid))
+	if (nghttp3_conn_bind_control_stream(clt->clt_h3conn, ctrl)) {
+		log_warnx("nghttp3_conn_bind_control_stream");
 		return (-1);
-	http_log_debug("%s ctrl_stream_id %llu\n", __func__, ctrl_sid);
+	}
 
-	si.stream_id = -1;
-	si.stream_flags = MSG_STREAM_UNI;
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len)) {
-		http_log_error("socket getsockopt stream_open enc failed\n");
+	if ((enc = stream_open(clt->clt_s, MSG_STREAM_UNI)) == -1) {
+		log_warn("stream_open enc");
 		return (-1);
 	}
-	qpk_enc_sid = si.stream_id;
-	http_log_debug("%s qpack_enc_stream_id %llu\n", __func__, qpk_enc_sid);
+	if ((dec = stream_open(clt->clt_s, MSG_STREAM_UNI)) == -1) {
+		log_warn("stream_open dec");
+		return (-1);
+	}
+	if (nghttp3_conn_bind_qpack_streams(clt->clt_h3conn, enc, dec)) {
+		log_warnx("nghttp3_conn_bind_qpack_streams");
+		return (-1);
+	}
 
-	si.stream_id = -1;
-	si.stream_flags = MSG_STREAM_UNI;
-	if(getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_STREAM_OPEN, &si, &len)) {
-		http_log_error("socket getsockopt stream_open dec failed\n");
-		return (-1);
-	}
-	qpk_dec_sid = si.stream_id;
-	http_log_debug("%s qpack_dec_stream_id %llu\n", __func__, qpk_dec_sid);
-	if (nghttp3_conn_bind_qpack_streams(clt->clt_h3conn, qpk_enc_sid,
-	    qpk_dec_sid))
-		return (-1);
-*/
+	log_debug("%s ctrl=%llu enc=%llu dec=%llu", __func__, ctrl, enc, dec);
+
 	return (0);
 }
 
 void
 server_http3conn_free(struct client *clt)
 {
-	nghttp3_conn_del(clt->clt_h3conn);
+	if (clt->clt_h3conn)
+		nghttp3_conn_del(clt->clt_h3conn);
 }
-
 
 void
 server_read_http3(int fd, void *arg)
 {
 	struct client		*clt = arg;
+	int64_t sid = -1;
+	uint32_t flags = 0;
+	int n, fin;
+	uint8_t buf[1500]; /* XXX */
 
 	getmonotime(&clt->clt_tv_last);
 
@@ -170,12 +346,17 @@ server_read_http3(int fd, void *arg)
 	}
 */
 
-/*
-	if (nghttp3_conn_read_stream(clt->clt_h3conn, stream_id, buf, ret,
-				       flags & MSG_STREAM_FIN) .... ) {
-	if (ret < 0)
-		return -1;
-*/
+	n = quic_recvmsg(clt->clt_s, &buf, sizeof(buf), &sid, &flags);
+	if (n == -1) {
+		log_warn("%s quic_recvmsg", __func__);
+		goto fail;
+	}
+
+	fin = flags & MSG_STREAM_FIN;
+	if (nghttp3_conn_read_stream(clt->clt_h3conn, sid, buf, n, fin) < 0) {
+		log_warnx("%s nghttp3_conn_read_stream", __func__);
+		goto fail;
+	}
 
 	if (clt->clt_done) {
 		server_close(clt, "done");
@@ -183,7 +364,11 @@ server_read_http3(int fd, void *arg)
 	}
 	return;
  fail:
+	/* XXX: free the connection */
+/*
 	server_abort_http3(clt, 500, strerror(errno));
+*/
+	return;
 }
 
 void
@@ -398,10 +583,8 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 		if (msg == NULL)
 			break;
 		memset(buf, 0, sizeof(buf));
-/* XXX
 		if (server_expand_http(clt, msg, buf, sizeof(buf)) == NULL)
 			goto done;
-*/
 		if (asprintf(&extraheader, "Location: %s\r\n", buf) == -1) {
 			code = 500;
 			extraheader = NULL;
@@ -553,23 +736,187 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 void
 server_close_http3(struct client *clt)
 {
-	struct http_descriptor *desc;
-
 	server_http3conn_free(clt);
 	clt->clt_h3conn = NULL;
-	desc = clt->clt_descreq;
-	server_httpdesc_free(desc);
-	free(desc);
-	clt->clt_descreq = NULL;
+}
 
-	desc = clt->clt_descresp;
-	server_httpdesc_free(desc);
-	free(desc);
-	clt->clt_descresp = NULL;
-	free(clt->clt_remote_user);
-	clt->clt_remote_user = NULL;
+int
+server_response3(struct httpd *httpd, struct client *clt)
+{
+	char			 path[PATH_MAX];
+	char			 hostname[HOST_NAME_MAX+1];
+	struct http_descriptor	*desc = clt->clt_descreq;
+	struct http_descriptor	*resp = clt->clt_descresp;
+	struct server		*srv = clt->clt_srv;
+	struct server_config	*srv_conf = &srv->srv_conf;
+	struct kv		*kv, key, *host;
+	struct str_find		 sm;
+	int			 portval = -1, ret;
+	char			*hostval, *query;
+	const char		*errstr = NULL;
 
-	str_match_free(&clt->clt_srv_match);
+	/* Preserve original path */
+	if (desc->http_path == NULL ||
+	    (desc->http_path_orig = strdup(desc->http_path)) == NULL)
+		goto fail;
+
+	/* Decode the URL */
+	if (url_decode(desc->http_path) == NULL)
+		goto fail;
+
+	/* Canonicalize the request path */
+	if (canonicalize_path(desc->http_path, path, sizeof(path)) == NULL)
+		goto fail;
+	free(desc->http_path);
+	if ((desc->http_path = strdup(path)) == NULL)
+		goto fail;
+
+	key.kv_key = ":authority";
+	if ((host = kv_find(&desc->http_headers, &key)) != NULL &&
+	    host->kv_value == NULL)
+			goto fail;
+
+	key.kv_key = "connection";
+	if ((kv = kv_find(&desc->http_headers, &key)) != NULL &&
+	    strcasecmp("keep-alive", kv->kv_value) == 0)
+		clt->clt_persist++;
+	else
+		clt->clt_persist = 0;
+
+	/*
+	 * Do we have a Host header and matching configuration?
+	 * XXX: is this necessary for H3?
+	 */
+	if (host != NULL) {
+		if ((hostval = server_http_parsehost(host->kv_value,
+		    hostname, sizeof(hostname), &portval)) == NULL)
+			goto fail;
+
+		TAILQ_FOREACH(srv_conf, &srv->srv_hosts, entry) {
+#ifdef DEBUG
+			if ((srv_conf->flags & SRVFLAG_LOCATION) == 0) {
+				DPRINTF("%s: virtual host \"%s:%u\""
+				    " host \"%s\" (\"%s\")",
+				    __func__, srv_conf->name,
+				    ntohs(srv_conf->port), host->kv_value,
+				    hostname);
+			}
+#endif
+			if (srv_conf->flags & SRVFLAG_LOCATION)
+				continue;
+			else if (srv_conf->flags & SRVFLAG_SERVER_MATCH) {
+				str_find(hostname, srv_conf->name,
+				    &sm, 1, &errstr);
+				ret = errstr == NULL ? 0 : -1;
+			} else {
+				ret = fnmatch(srv_conf->name,
+				    hostname, FNM_CASEFOLD);
+			}
+			if (ret == 0 &&
+			    (portval == -1 || portval == srv_conf->port)) {
+				/* Replace host configuration */
+				clt->clt_srv_conf = srv_conf;
+				srv_conf = NULL;
+				break;
+			}
+		}
+	}
+
+	if (srv_conf != NULL) {
+		/* Use the actual server IP address */
+		if (server_http_host(&clt->clt_srv_ss, hostname,
+		    sizeof(hostname)) == NULL)
+			goto fail;
+	} else {
+		/* Host header was valid and found */
+		if (strlcpy(hostname, host->kv_value, sizeof(hostname)) >=
+		    sizeof(hostname))
+			goto fail;
+		srv_conf = clt->clt_srv_conf;
+	}
+
+
+	if (clt->clt_persist >= srv_conf->maxrequests)
+		clt->clt_persist = 0;
+
+	/* pipelining should end after the first "idempotent" method */
+	if (clt->clt_pipelining && clt->clt_toread > 0)
+		clt->clt_persist = 0;
+
+	if ((desc->http_host = strdup(hostname)) == NULL)
+		goto fail;
+
+	/* Now fill in the mandatory parts of the response descriptor */
+	resp->http_method = desc->http_method;
+	if ((resp->http_version = strdup(desc->http_version)) == NULL)
+		goto fail;
+
+	/* Now search for the location */
+	if ((srv_conf = server_getlocation(clt, desc->http_path)) == NULL) {
+		server_abort_http3(clt, 500, desc->http_path);
+		return (-1);
+	}
+
+	/* Optional rewrite */
+	if (srv_conf->flags & SRVFLAG_PATH_REWRITE) {
+		/* Expand macros */
+		if (server_expand_http(clt, srv_conf->path,
+		    path, sizeof(path)) == NULL)
+			goto fail;
+
+		/*
+		 * Reset and update the query.  The updated query must already
+		 * be URL encoded - either specified by the user or by using the
+		 * original $QUERY_STRING.
+		 */
+		free(desc->http_query_alias);
+		desc->http_query_alias = NULL;
+		if ((query = strchr(path, '?')) != NULL) {
+			*query++ = '\0';
+			if ((desc->http_query_alias = strdup(query)) == NULL)
+				goto fail;
+		}
+
+		/* Canonicalize the updated request path */
+		if (canonicalize_path(path,
+		    path, sizeof(path)) == NULL)
+			goto fail;
+
+		log_debug("%s: rewrote %s?%s -> %s?%s", __func__,
+		    desc->http_path, desc->http_query ? desc->http_query : "",
+		    path, query ? query : "");
+
+		free(desc->http_path_alias);
+		if ((desc->http_path_alias = strdup(path)) == NULL)
+			goto fail;
+
+		/* Now search for the updated location */
+		if ((srv_conf = server_getlocation(clt,
+		    desc->http_path_alias)) == NULL) {
+			server_abort_http3(clt, 500, desc->http_path_alias);
+			return (-1);
+		}
+	}
+
+	if (clt->clt_toread > 0 && (size_t)clt->clt_toread >
+	    srv_conf->maxrequestbody) {
+		server_abort_http3(clt, 413, "request body too large");
+		return (-1);
+	}
+
+	if (srv_conf->flags & SRVFLAG_BLOCK) {
+		server_abort_http3(clt, srv_conf->return_code,
+		    srv_conf->return_uri);
+		return (-1);
+	} else if (srv_conf->flags & SRVFLAG_AUTH &&
+	    server_http_authenticate(srv_conf, clt) == -1) {
+		server_abort_http3(clt, 401, srv_conf->auth_realm);
+		return (-1);
+	} else
+		return (server_file(httpd, clt));
+ fail:
+	server_abort_http3(clt, 400, "bad request");
+	return (-1);
 }
 
 int

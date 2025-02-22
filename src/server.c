@@ -1024,6 +1024,10 @@ server_input(struct client *clt)
 	 */
 #ifdef HAVE_NETINET_QUIC_H
 	if (srv_conf->flags & SRVFLAG_QUIC) {
+		if (server_http3conn_init(clt) == -1) {
+			server_close(clt, "failed to initialize h3 connection");
+			return;
+		}
 		event_del(&clt->clt_ev);
 		event_set(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
 		    EV_WRITE | EV_PERSIST, server_quic_ev_switch, clt);
@@ -1490,6 +1494,7 @@ server_close(struct client *clt, const char *msg)
 
 	/* free the HTTP descriptors incl. headers */
 	server_close_http(clt);
+	server_close_http3(clt);
 
 	/* tls_close must be called before the underlying socket is closed. */
 	if (clt->clt_tls_ctx != NULL)
