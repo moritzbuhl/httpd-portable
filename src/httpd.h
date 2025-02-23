@@ -280,6 +280,12 @@ struct privsep_fd {
 	unsigned int			 pf_instance;
 };
 
+struct h3_dyn_nva {
+	nghttp3_nv *nva;
+	size_t nvlen;
+	size_t nvsize;
+};
+
 enum fcgistate {
 	FCGI_READ_HEADER,
 	FCGI_READ_CONTENT,
@@ -329,11 +335,13 @@ struct client {
 	struct bufferevent	*clt_bev;
 	struct evbuffer		*clt_output;
 	struct event		 clt_ev;
-	nghttp3_conn		*clt_h3conn;
 	struct http_descriptor	*clt_descreq;
 	struct http_descriptor	*clt_descresp;
 	int			 clt_sndbufsiz;
 	uint64_t		 clt_boundary;
+
+	nghttp3_conn		*clt_h3conn;
+	struct h3_dyn_nva	 clt_h3dnva;
 
 	int			 clt_fd;
 	gnutls_session_t	 clt_quic_ctx;
@@ -720,6 +728,8 @@ void	 server_read_http3(int, void *);
 int	 server_http3conn_init(struct client *);
 void	 server_reset_http3(struct client *);
 void	 server_read_http3content(int fd, void *);
+int	 server_writeheader_http3(struct client *clt, struct kv *, void *);
+void	 server_response_http3(struct evbuffer *, size_t, size_t, void *);
 
 /* server_file.c */
 int	 server_file(struct httpd *, struct client *);
