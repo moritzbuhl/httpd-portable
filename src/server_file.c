@@ -330,14 +330,17 @@ server_file_request(struct httpd *env, struct client *clt, struct media_type
 	bufferevent_settimeout(clt->clt_srvbev,
 	    srv_conf->timeout.tv_sec, srv_conf->timeout.tv_sec);
 	bufferevent_enable(clt->clt_srvbev, EV_READ);
-	bufferevent_disable(clt->clt_bev, EV_READ);
+	if (clt->clt_bev)
+		bufferevent_disable(clt->clt_bev, EV_READ);
 
  done:
 	server_reset_http(clt);
 	return (0);
  fail:
-	bufferevent_disable(clt->clt_bev, EV_READ|EV_WRITE);
-	bufferevent_free(clt->clt_bev);
+	if (clt->clt_bev) {
+		bufferevent_disable(clt->clt_bev, EV_READ|EV_WRITE);
+		bufferevent_free(clt->clt_bev);
+	}
 	clt->clt_bev = NULL;
  abort:
 	if (fd != -1)

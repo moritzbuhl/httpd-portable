@@ -54,38 +54,88 @@ void		 server_abort_http3(struct client *, unsigned int,
 		    const char *);
 void		 server_close_http3(struct client *);
 int		 server_response3(struct httpd *, struct client *);
-int		 server_response_http3(struct client *, unsigned int,
-		    struct media_type *, off_t, time_t);
 int		 server_http_authenticate(struct server_config *,
 		    struct client *);
 void		 server_read_http3range(struct bufferevent *, void *);
+int		 server_writeheader_http3(struct client *, struct kv *,
+		    void *);
+
+static int
+h3_dyn_nva_init(struct h3_dyn_nva *dnva)
+{
+	dnva->nvlen = 0;
+	dnva->nvsize = 10;
+	if ((dnva->nva = calloc(dnva->nvsize, sizeof(struct nghttp3_nv)))
+	    == NULL)
+		return (-1);
+	return (0);
+}
+
+static void
+h3_dyn_nva_reset(struct h3_dyn_nva *dnva)
+{
+	memset(dnva->nva, 0, dnva->nvlen * sizeof(struct nghttp3_nv));
+	dnva->nvlen = 0;
+}
+
+static int
+h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
+{
+	struct nghttp3_nv *nv = &(dnva->nva[dnva->nvlen]);
+
+	nv->name = (uint8_t *)key;
+        nv->namelen = strlen(key);
+	if (value) {
+		nv->value = (uint8_t *)value;
+		nv->valuelen = strlen(value);
+	}
+        /* XXX: make sure kvs are not deleted */
+	/* nv->flags = NGHTTP3_NV_FLAG_NO_COPY_NAME |
+	    NGHTTP3_NV_FLAG_NO_COPY_VALUE; */
+
+	dnva->nvlen++;
+	if (dnva->nvlen == dnva->nvsize) {
+		if ((dnva->nva = recallocarray(dnva->nva, dnva->nvsize,
+		    dnva->nvsize * 2, sizeof(struct nghttp3_nv))) == NULL)
+			return (-1);
+		dnva->nvsize *= 2;
+	}
+	return (0);
+}
+
+static nghttp3_ssize
+h3_read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec, size_t veccnt, uint32_t *pflags, void *user_data, void *stream_user_data)
+{
+	/* XXX */
+	return 0; // num vecs;
+}
 
 static int
 h3_acked_stream_data(nghttp3_conn *conn, int64_t stream_id, uint64_t datalen, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_stream_close(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_deferred_consume(nghttp3_conn *conn, int64_t stream_id, size_t nconsumed, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
@@ -135,7 +185,7 @@ h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcb
 			return (-1);
 	}
 
-	return 0;
+	return (0);
 }
 
 static int
@@ -153,56 +203,56 @@ h3_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *
 		return (-1);
 
 	clt->clt_headersdone = 1;
-	return 0;
+	return (0);
 }
 
 static int
 h3_begin_trailers(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_recv_trailer(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_end_trailers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_stop_sending(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_reset_stream(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings, void *arg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
 h3_shutdown(nghttp3_conn *conn, int64_t id, void *arg)
 {
 	log_debug("%s", __func__);
-	return 0;
+	return (0);
 }
 
 static int
@@ -217,17 +267,25 @@ h3_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data, size_t 
 	total += datalen;
 	log_debug("");
 	log_debug("%s: %lu", __func__, total);
-	return 0;
+	return (0);
 }
 
 static int
 h3_end_stream(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
 {
 	struct client		*clt = arg;
+	struct http_descriptor	*resp = clt->clt_descresp;
+	struct nghttp3_data_reader	 dr;
 
 	log_debug("%s", __func__);
 	server_response3(httpd_env, clt);
-	return 0;
+	h3_dyn_nva_reset(&clt->clt_h3dnva);
+	if (server_headers(clt, resp, server_writeheader_http3, NULL) == -1)
+		return (-1);
+
+        dr.read_data = h3_read_data;
+        return nghttp3_conn_submit_response(conn, stream_id,
+	    clt->clt_h3dnva.nva, clt->clt_h3dnva.nvlen, &dr);
 }
 
 void
@@ -278,8 +336,11 @@ server_http3conn_init(struct client *clt)
 	settings.qpack_blocked_streams = 100;
 	settings.qpack_max_dtable_capacity = 4096;
 
-	if (nghttp3_conn_server_new(&(clt->clt_h3conn), &callbacks, &settings,
+	if (nghttp3_conn_server_new(&clt->clt_h3conn, &callbacks, &settings,
 	    NULL, clt))
+		return (-1);
+
+	if (h3_dyn_nva_init(&clt->clt_h3dnva) == -1)
 		return (-1);
 
 	plen = sizeof(param);
@@ -324,6 +385,8 @@ server_http3conn_free(struct client *clt)
 {
 	if (clt->clt_h3conn)
 		nghttp3_conn_del(clt->clt_h3conn);
+	if (clt->clt_h3dnva.nva)
+		free(clt->clt_h3dnva.nva);
 }
 
 void
@@ -513,28 +576,6 @@ server_read_http3range(struct bufferevent *bev, void *arg)
 	return;
  fail:
 	server_close(clt, strerror(errno));
-}
-
-void
-server_reset_http3(struct client *clt)
-{
-	struct server		*srv = clt->clt_srv;
-
-	server_log(clt, NULL);
-
-	server_http3conn_free(clt);
-	server_httpdesc_free(clt->clt_descreq);
-	server_httpdesc_free(clt->clt_descresp);
-	clt->clt_headerlen = 0;
-	clt->clt_headersdone = 0;
-	clt->clt_done = 0;
-	clt->clt_line = 0;
-	clt->clt_chunk = 0;
-	free(clt->clt_remote_user);
-	clt->clt_remote_user = NULL;
-	clt->clt_bev->readcb = server_read_http;
-	clt->clt_srv_conf = &srv->srv_conf;
-	str_match_free(&clt->clt_srv_match);
 }
 
 void
@@ -920,91 +961,29 @@ server_response3(struct httpd *httpd, struct client *clt)
 }
 
 int
-server_response_http3(struct client *clt, unsigned int code,
-    struct media_type *media, off_t size, time_t mtime)
+server_writeheader_http3(struct client *clt, struct kv *hdr, void *arg)
 {
-	struct server_config	*srv_conf = clt->clt_srv_conf;
-	struct http_descriptor	*desc = clt->clt_descreq;
-	struct http_descriptor	*resp = clt->clt_descresp;
-	const char		*error;
-	struct kv		*ct, *cl;
-	char			 tmbuf[32];
+        char                   	*ptr;
+        const char             	*key;
 
-	if (desc == NULL || media == NULL ||
-	    (error = server_httperror_byid(code)) == NULL)
-		return (-1);
+        /* The key might have been updated in the parent */
+        if (hdr->kv_parent != NULL && hdr->kv_parent->kv_key != NULL)
+                key = hdr->kv_parent->kv_key;
+        else
+                key = hdr->kv_key;
 
-	if (server_log_http(clt, code, size >= 0 ? size : 0) == -1)
-		return (-1);
+        ptr = hdr->kv_value;
+        if (h3_dyn_nva_add(&clt->clt_h3dnva, key, ptr) == -1)
+                return (-1);
+        DPRINTF("%s: %s: %s", __func__, key,
+            hdr->kv_value == NULL ? "" : hdr->kv_value);
 
-	/* Add error codes */
-	if (kv_setkey(&resp->http_pathquery, "%u", code) == -1 ||
-	    kv_set(&resp->http_pathquery, "%s", error) == -1)
-		return (-1);
+        return (0);
+}
 
-	/* Add headers */
-	if (kv_add(&resp->http_headers, "Server", HTTPD_SERVERNAME) == NULL)
-		return (-1);
-
-	/* Is it a persistent connection? */
-	if (clt->clt_persist) {
-		if (kv_add(&resp->http_headers,
-		    "Connection", "keep-alive") == NULL)
-			return (-1);
-	} else if (kv_add(&resp->http_headers, "Connection", "close") == NULL)
-		return (-1);
-
-	/* Set media type */
-	if ((ct = kv_add(&resp->http_headers, "Content-Type", NULL)) == NULL ||
-	    kv_set(ct, "%s/%s", media->media_type, media->media_subtype) == -1)
-		return (-1);
-
-	/* Set content length, if specified */
-	if (size >= 0 && ((cl =
-	    kv_add(&resp->http_headers, "Content-Length", NULL)) == NULL ||
-	    kv_set(cl, "%lld", (long long)size) == -1))
-		return (-1);
-
-	/* Set last modification time */
-	if (server_http_time(mtime, tmbuf, sizeof(tmbuf)) <= 0 ||
-	    kv_add(&resp->http_headers, "Last-Modified", tmbuf) == NULL)
-		return (-1);
-
-	/* HSTS header */
-	if (srv_conf->flags & SRVFLAG_SERVER_HSTS &&
-	    srv_conf->flags & SRVFLAG_TLS) {
-		if ((cl =
-		    kv_add(&resp->http_headers, "Strict-Transport-Security",
-		    NULL)) == NULL ||
-		    kv_set(cl, "max-age=%d%s%s", srv_conf->hsts_max_age,
-		    srv_conf->hsts_flags & HSTSFLAG_SUBDOMAINS ?
-		    "; includeSubDomains" : "",
-		    srv_conf->hsts_flags & HSTSFLAG_PRELOAD ?
-		    "; preload" : "") == -1)
-			return (-1);
-	}
-
-	/* Date header is mandatory and should be added as late as possible */
-	if (server_http_time(time(NULL), tmbuf, sizeof(tmbuf)) <= 0 ||
-	    kv_add(&resp->http_headers, "Date", tmbuf) == NULL)
-		return (-1);
-
-	/* Write completed header */
-	if (server_writeresponse_http(clt) == -1 ||
-	    server_bufferevent_print(clt, "\r\n") == -1 ||
-	    server_headers(clt, resp, server_writeheader_http, NULL) == -1 ||
-	    server_bufferevent_print(clt, "\r\n") == -1)
-		return (-1);
-
-	if (size <= 0 || resp->http_method == HTTP_METHOD_HEAD) {
-		bufferevent_enable(clt->clt_bev, EV_READ|EV_WRITE);
-		if (clt->clt_persist)
-			clt->clt_toread = TOREAD_HTTP_HEADER;
-		else
-			clt->clt_toread = TOREAD_HTTP_NONE;
-		clt->clt_done = 0;
-		return (0);
-	}
-
-	return (1);
+void 
+server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
+{
+	struct client		*clt = arg;
+        DPRINTF("%s: hallo", __func__);
 }

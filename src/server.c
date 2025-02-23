@@ -1278,6 +1278,7 @@ server_accept(int fd, short event, void *arg)
 			server_close(clt, "failed to init quic socket");
 			return;
 		}
+		evbuffer_setcb(clt->clt_output, server_response_http3, clt);
 		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT|EV_READ,
 		    server_quic_handshake, &clt->clt_tv_start,
 		    &srv->srv_conf.timeout, clt);
