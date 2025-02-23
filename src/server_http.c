@@ -782,7 +782,8 @@ server_reset_http(struct client *clt)
 	clt->clt_chunk = 0;
 	free(clt->clt_remote_user);
 	clt->clt_remote_user = NULL;
-	clt->clt_bev->readcb = server_read_http;
+	if (clt->clt_bev)
+		clt->clt_bev->readcb = server_read_http;
 	clt->clt_srv_conf = &srv->srv_conf;
 	str_match_free(&clt->clt_srv_match);
 }
@@ -1605,8 +1606,15 @@ server_response_http(struct client *clt, unsigned int code,
 	    kv_add(&resp->http_headers, "Date", tmbuf) == NULL)
 		return (-1);
 
+	if (clt->clt_h3conn) {
+		if (kv_add(&resp->http_headers, ":status", resp->http_rescode)
+		    == NULL)
+			return (-1);
+		if (server_headers(clt, resp, server_writeheader_http3, NULL)
+		    == -1)
+			return (-1);
 	/* Write completed header */
-	if (server_writeresponse_http(clt) == -1 ||
+	} else if (server_writeresponse_http(clt) == -1 ||
 	    server_bufferevent_print(clt, "\r\n") == -1 ||
 	    server_headers(clt, resp, server_writeheader_http, NULL) == -1 ||
 	    server_bufferevent_print(clt, "\r\n") == -1)
