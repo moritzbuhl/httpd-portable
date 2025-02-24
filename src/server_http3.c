@@ -192,7 +192,6 @@ h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcb
 	log_debug("%s: sid=%lld %.*s: %.*s", __func__, stream_id, (int)k.len,
 	    k.base, (int)v.len, v.base);
 
-	/* XXX: don't do this for every header? */
 	if (asprintf(&val, "%.*s", (int)v.len, v.base) == -1) {
 		log_warn("asprintf");
 		return (-1);
@@ -200,12 +199,12 @@ h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcb
 	
 	switch (token) {
 	case NGHTTP3_QPACK_TOKEN__METHOD:
-		if ((desc->http_method = server_httpmethod_byname(val))
-		    == HTTP_METHOD_NONE) {
+		desc->http_method = server_httpmethod_byname(val);
+		free(val);
+		if (desc->http_method == HTTP_METHOD_NONE) {
 			/* XXX server_abort_http3(clt, 400, "malformed"); */
 			return (-1);
 		}
-		free(val);
 		break;
 	case NGHTTP3_QPACK_TOKEN__PATH:
 		desc->http_path = val;
@@ -213,7 +212,7 @@ h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcb
 	case NGHTTP3_QPACK_TOKEN_CONTENT_LENGTH:
 		if (desc->http_method == HTTP_METHOD_TRACE ||
 		    desc->http_method == HTTP_METHOD_CONNECT)
-			server_abort_http(clt, 400, "malformed");
+			server_abort_http3(clt, 400, "malformed");
 		/* FALLTHROUGH */
 	default:
 		if (asprintf(&key, "%.*s", (int)k.len, k.base) == -1) {
