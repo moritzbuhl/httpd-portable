@@ -1563,13 +1563,16 @@ server_response_http(struct client *clt, unsigned int code,
 	if (kv_add(&resp->http_headers, "Server", HTTPD_SERVERNAME) == NULL)
 		return (-1);
 
-	/* Is it a persistent connection? */
-	if (clt->clt_persist) {
-		if (kv_add(&resp->http_headers,
-		    "Connection", "keep-alive") == NULL)
+	if (!clt->clt_h3conn) {
+		/* Is it a persistent connection? */
+		if (clt->clt_persist) {
+			if (kv_add(&resp->http_headers,
+			    "Connection", "keep-alive") == NULL)
+				return (-1);
+		} else if (kv_add(&resp->http_headers, "Connection", "close")
+		    == NULL)
 			return (-1);
-	} else if (kv_add(&resp->http_headers, "Connection", "close") == NULL)
-		return (-1);
+	}
 
 	/* Set media type */
 	if ((ct = kv_add(&resp->http_headers, "Content-Type", NULL)) == NULL ||

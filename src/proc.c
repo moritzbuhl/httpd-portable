@@ -557,7 +557,20 @@ proc_run(struct privsep *ps, struct privsep_proc *p,
 	    setresuid(pw->pw_uid, pw->pw_uid, pw->pw_uid))
 		fatal("%s: cannot drop privileges", __func__);
 
+#ifdef __linux__
+	/* The default EPOLL backend does not handle regular files,
+	 * which is needed for server_file.
+	 */
+	struct event_base;
+	extern struct event_base *event_global_current_base_;
+	struct event_config *config = event_config_new();
+	event_config_require_features(config, EV_FEATURE_FDS);
+	struct event_base *base = event_base_new_with_config(config);
+	event_config_free(config);
+	event_global_current_base_ = base;
+#else
 	event_init();
+#endif
 
 	signal_set(&ps->ps_evsigint, SIGINT, proc_sig_handler, p);
 	signal_set(&ps->ps_evsigterm, SIGTERM, proc_sig_handler, p);
