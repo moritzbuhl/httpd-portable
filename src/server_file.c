@@ -684,6 +684,9 @@ server_file_error(struct bufferevent *bev, short error, void *arg)
 
 		clt->clt_done = 1;
 
+		if (!clt->clt_bev)
+			return;
+
 		src = EVBUFFER_INPUT(clt->clt_bev);
 
 		/* Close the connection if a previous pipeline is empty */

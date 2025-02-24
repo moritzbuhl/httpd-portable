@@ -26,7 +26,7 @@
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <linux/quic.h>
+#include <netinet/quic.h>
 
 #include <errno.h>
 #include <stdlib.h>
@@ -74,8 +74,31 @@ h3_dyn_nva_init(struct h3_dyn_nva *dnva)
 static void
 h3_dyn_nva_reset(struct h3_dyn_nva *dnva)
 {
+	struct nghttp3_nv *nv;
+	int i;
+
+	for (i = 0; i < dnva->nvlen; i++) {
+		nv = &(dnva->nva[i]);
+		free(nv->name);
+		free(nv->value);
+	}
 	memset(dnva->nva, 0, dnva->nvlen * sizeof(struct nghttp3_nv));
 	dnva->nvlen = 0;
+}
+
+static void
+h3_dyn_nva_free(struct h3_dyn_nva *dnva)
+{
+	struct nghttp3_nv *nv;
+	int i;
+
+	for (i = 0; i < dnva->nvlen; i++) {
+		nv = &(dnva->nva[i]);
+		free(nv->name);
+		free(nv->value);
+	}
+
+	free(dnva->nva);
 }
 
 static int
@@ -83,10 +106,12 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 {
 	struct nghttp3_nv *nv = &(dnva->nva[dnva->nvlen]);
 
-	nv->name = (uint8_t *)key;
+	if ((nv->name = (uint8_t *)strdup(key)) == NULL)
+		return (-1); // XXX
         nv->namelen = strlen(key);
 	if (value) {
-		nv->value = (uint8_t *)value;
+		if ((nv->value = (uint8_t *)strdup(value)) == NULL)
+			return (-1); // XXX
 		nv->valuelen = strlen(value);
 	}
         /* XXX: make sure kvs are not deleted */
@@ -104,10 +129,25 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 }
 
 static nghttp3_ssize
-h3_read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec, size_t veccnt, uint32_t *pflags, void *user_data, void *stream_user_data)
+h3_read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec, size_t veccnt, uint32_t *pflags, void *arg, void *sarg)
 {
-	/* XXX */
-	return 0; // num vecs;
+	struct client		*clt = arg;
+	size_t			 tot = 0;
+	int			 n, i;
+
+	n = evbuffer_peek(clt->clt_output, -1, NULL,
+	    (struct evbuffer_iovec *)vec, veccnt);
+
+	for (i = 0; i < n; i++)
+		tot += vec[i].len;
+
+	/* XXX: delete tot bytes from clt_output once they are sent */
+
+	log_debug("%s EVBUFFER_LENGTH=%llu tot=%llu", __func__, EVBUFFER_LENGTH(clt->clt_output), tot);
+	if (EVBUFFER_LENGTH(clt->clt_output) == tot)
+		*pflags |= NGHTTP3_DATA_FLAG_EOF;
+
+	return n;
 }
 
 static int
@@ -258,15 +298,9 @@ h3_shutdown(nghttp3_conn *conn, int64_t id, void *arg)
 static int
 h3_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data, size_t datalen, void *arg, void *sarg)
 {
-	static size_t total;
-	int i;
+	log_info("%.s", datalen, data);
 
-	for (i = 0; i < datalen; i++)
-		log_info("%c", data[i]);
-
-	total += datalen;
-	log_debug("");
-	log_debug("%s: %lu", __func__, total);
+	log_debug("%s: %lu", __func__, datalen);
 	return (0);
 }
 
@@ -278,10 +312,8 @@ h3_end_stream(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
 	struct nghttp3_data_reader	 dr;
 
 	log_debug("%s", __func__);
-	server_response3(httpd_env, clt);
 	h3_dyn_nva_reset(&clt->clt_h3dnva);
-	if (server_headers(clt, resp, server_writeheader_http3, NULL) == -1)
-		return (-1);
+	server_response3(httpd_env, clt);
 
         dr.read_data = h3_read_data;
         return nghttp3_conn_submit_response(conn, stream_id,
@@ -385,8 +417,8 @@ server_http3conn_free(struct client *clt)
 {
 	if (clt->clt_h3conn)
 		nghttp3_conn_del(clt->clt_h3conn);
-	if (clt->clt_h3dnva.nva)
-		free(clt->clt_h3dnva.nva);
+	if (clt->clt_h3dnva.nvlen)
+		h3_dyn_nva_free(&clt->clt_h3dnva);
 }
 
 void
@@ -427,6 +459,7 @@ server_read_http3(int fd, void *arg)
 	}
 	return;
  fail:
+	DPRINTF("%s: fail", __func__);
 	/* XXX: free the connection */
 /*
 	server_abort_http3(clt, 500, strerror(errno));
@@ -985,5 +1018,38 @@ void
 server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
 {
 	struct client		*clt = arg;
-        DPRINTF("%s: hallo", __func__);
+	struct iovec		 iovs[16];
+	int64_t			 sid = -1;
+	ssize_t			 nvs;
+	int			 i, n, tot, fin = 0;
+
+	if (old > now) {
+		DPRINTF("%s: old=%lld, now=%lld", __func__, old, now);
+		/* XXX: if now == 0, then do some of the things from server_file_error. */
+		return;
+	}
+
+	while ((nvs = nghttp3_conn_writev_stream(clt->clt_h3conn, &sid, &fin,
+	    (struct nghttp3_vec *)iovs, 16)) != 0) {
+		if (nvs < 0) {
+			log_warnx("nghttp3_conn_writev_stream");
+			return;
+		}
+		tot = 0;
+
+		for (i = 0; i < nvs; i++) {
+			log_debug("%s: len=%d sid=%ld fin=%d", __func__, iovs[i].iov_len, sid, i == nvs - 1 && fin);
+			if ((n = quic_sendmsg(clt->clt_s, iovs[i].iov_base,
+			    iovs[i].iov_len, sid, (i == nvs - 1 && fin) ?
+			    MSG_STREAM_FIN : 0)) < 0) {
+				log_warn("quic_sendmsg");
+				return;
+			} else
+				tot += n;
+		}
+		if (nghttp3_conn_add_write_offset(clt->clt_h3conn, sid, tot)) {
+			log_warnx("nghttp3_conn_add_write_offset");
+			return;
+		}
+	}
 }
