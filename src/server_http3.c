@@ -1020,7 +1020,7 @@ server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
 	struct iovec		 iovs[16];
 	int64_t			 sid = -1;
 	ssize_t			 nvs;
-	int			 n, tot, fin = 0, flags;
+	int			 n, fin = 0, flags;
 
 	if (old > now) {
 		DPRINTF("%s: old=%lld, now=%lld", __func__, old, now);
@@ -1034,16 +1034,14 @@ server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
 			log_warnx("nghttp3_conn_writev_stream");
 			return;
 		}
-		tot = 0;
 
 		flags = (fin) ?  MSG_STREAM_FIN : 0;
 		if ((n = quic_sendmsg(clt->clt_s, iovs, nvs, sid, flags)) < 0) {
 			log_warn("quic_sendmsg");
 			return;
-		} else
-			tot += n;
+		}
 
-		if (nghttp3_conn_add_write_offset(clt->clt_h3conn, sid, tot)) {
+		if (nghttp3_conn_add_write_offset(clt->clt_h3conn, sid, n)) {
 			log_warnx("nghttp3_conn_add_write_offset");
 			return;
 		}
