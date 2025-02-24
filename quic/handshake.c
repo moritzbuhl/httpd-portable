@@ -209,8 +209,8 @@ ssize_t quic_recvmsg(int sockfd, void *msg, size_t len, int64_t *sid, uint32_t *
 /**
  * quic_sendmsg - send msg with stream ID and flag
  * @sockfd: IPPROTO_QUIC type socket
- * @msg: msg to send
- * @len: the length of the msg to send
+ * @iov: iovecs to send
+ * @nvs: the number of iovs
  * @sid: stream ID
  * @flag: stream flag
  *
@@ -218,21 +218,17 @@ ssize_t quic_recvmsg(int sockfd, void *msg, size_t len, int64_t *sid, uint32_t *
  * - On success, the number of bytes sent is returned.
  * - On error, -1 is returned, and errno is set to indicate the error.
  */
-ssize_t quic_sendmsg(int sockfd, const void *msg, size_t len, int64_t sid, uint32_t flags)
+ssize_t quic_sendmsg(int sockfd, struct iovec *iov, unsigned int nvs, int64_t sid, uint32_t flags)
 {
 	char outcmsg[CMSG_SPACE(sizeof(struct quic_stream_info))];
 	struct quic_stream_info *info;
 	struct msghdr outmsg;
 	struct cmsghdr *cmsg;
-	struct iovec iov;
 
 	outmsg.msg_name = NULL;
 	outmsg.msg_namelen = 0;
-	outmsg.msg_iov = &iov;
-	iov.iov_base = (void *)msg;
-	iov.iov_len = len;
-	outmsg.msg_iovlen = 1;
-
+	outmsg.msg_iov = iov;
+	outmsg.msg_iovlen = nvs;
 	outmsg.msg_control = outcmsg;
 	outmsg.msg_controllen = sizeof(outcmsg);
 
