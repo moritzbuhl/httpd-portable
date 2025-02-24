@@ -932,7 +932,6 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 			goto done;
 		if (asprintf(&extraheader, "Location: %s\r\n", buf) == -1) {
 			code = 500;
-			extraheader = NULL;
 		}
 		msg = buf;
 		break;
@@ -941,12 +940,10 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 			break;
 		if (stravis(&escapedmsg, msg, VIS_DQ) == -1) {
 			code = 500;
-			extraheader = NULL;
 		} else if (asprintf(&extraheader,
 		    "WWW-Authenticate: Basic realm=\"%s\"\r\n", escapedmsg)
 		    == -1) {
 			code = 500;
-			extraheader = NULL;
 		}
 		break;
 	case 416:
@@ -955,7 +952,6 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 		if (asprintf(&extraheader,
 		    "Content-Range: %s\r\n", msg) == -1) {
 			code = 500;
-			extraheader = NULL;
 		}
 		break;
 	default:
