@@ -1025,12 +1025,9 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 		}
 	}
 
-	if ((code >= 100 && code < 200) || code == 204)
-		clenheader = NULL;
-	else {
+	if ((code >= 200 && code != 204)
 		if (asprintf(&clenheader,
 		    "Content-Length: %zd\r\n", bodylen) == -1) {
-			clenheader = NULL;
 			goto done;
 		}
 	}
