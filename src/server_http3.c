@@ -129,7 +129,7 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 }
 
 static nghttp3_ssize
-h3_read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec, size_t veccnt, uint32_t *pflags, void *arg, void *sarg)
+h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vec, size_t veccnt, uint32_t *pflags, void *arg, void *sarg)
 {
 	struct client		*clt = arg;
 	size_t			 tot = 0;
@@ -151,35 +151,35 @@ h3_read_data(nghttp3_conn *conn, int64_t stream_id, nghttp3_vec *vec, size_t vec
 }
 
 static int
-h3_acked_stream_data(nghttp3_conn *conn, int64_t stream_id, uint64_t datalen, void *arg, void *sarg)
+h3_acked_stream_data(nghttp3_conn *conn, int64_t sid, uint64_t datalen, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_stream_close(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
+h3_stream_close(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_deferred_consume(nghttp3_conn *conn, int64_t stream_id, size_t nconsumed, void *arg, void *sarg)
+h3_deferred_consume(nghttp3_conn *conn, int64_t sid, size_t nconsumed, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_begin_headers(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
+h3_begin_headers(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
+h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
 {
 	struct client		*clt = arg;
 	struct http_descriptor	*desc = clt->clt_descreq;
@@ -189,8 +189,8 @@ h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcb
 	nghttp3_vec		 k = nghttp3_rcbuf_get_buf(name);
 	nghttp3_vec		 v = nghttp3_rcbuf_get_buf(value);
 
-	log_debug("%s: sid=%lld %.*s: %.*s", __func__, stream_id, (int)k.len,
-	    k.base, (int)v.len, v.base);
+	log_debug("%s: sid=%lld %.*s: %.*s", __func__, sid, (int)k.len, k.base,
+	    (int)v.len, v.base); /* XXX: remove me */
 
 	if (asprintf(&val, "%.*s", (int)v.len, v.base) == -1) {
 		log_warn("asprintf");
@@ -228,7 +228,7 @@ h3_recv_header(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcb
 }
 
 static int
-h3_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *sarg)
+h3_end_headers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 {
 	struct client		*clt = arg;
 	struct http_descriptor  *desc = clt->clt_descreq;
@@ -246,35 +246,35 @@ h3_end_headers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *
 }
 
 static int
-h3_begin_trailers(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
+h3_begin_trailers(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_recv_trailer(nghttp3_conn *conn, int64_t stream_id, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
+h3_recv_trailer(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_end_trailers(nghttp3_conn *conn, int64_t stream_id, int fin, void *arg, void *sarg)
+h3_end_trailers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_stop_sending(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
+h3_stop_sending(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
 }
 
 static int
-h3_reset_stream(nghttp3_conn *conn, int64_t stream_id, uint64_t app_error_code, void *arg, void *sarg)
+h3_reset_stream(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code, void *arg, void *sarg)
 {
 	log_debug("%s", __func__);
 	return (0);
@@ -295,7 +295,7 @@ h3_shutdown(nghttp3_conn *conn, int64_t id, void *arg)
 }
 
 static int
-h3_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data, size_t datalen, void *arg, void *sarg)
+h3_recv_data(nghttp3_conn *conn, int64_t sid, const uint8_t *data, size_t datalen, void *arg, void *sarg)
 {
 	log_info("%.s", datalen, data);
 
@@ -304,7 +304,7 @@ h3_recv_data(nghttp3_conn *conn, int64_t stream_id, const uint8_t *data, size_t 
 }
 
 static int
-h3_end_stream(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
+h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
 	struct client		*clt = arg;
 	struct http_descriptor	*resp = clt->clt_descresp;
@@ -315,8 +315,8 @@ h3_end_stream(nghttp3_conn *conn, int64_t stream_id, void *arg, void *sarg)
 	server_response3(httpd_env, clt);
 
         dr.read_data = h3_read_data;
-        return nghttp3_conn_submit_response(conn, stream_id,
-	    clt->clt_h3dnva.nva, clt->clt_h3dnva.nvlen, &dr);
+        return nghttp3_conn_submit_response(conn, sid, clt->clt_h3dnva.nva,
+	    clt->clt_h3dnva.nvlen, &dr);
 }
 
 void
