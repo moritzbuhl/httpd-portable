@@ -342,6 +342,7 @@ struct client {
 
 	nghttp3_conn		*clt_h3conn;
 	struct h3_dyn_nva	 clt_h3dnva;
+	int64_t			*clt_h3cursid;
 
 	int			 clt_fd;
 	gnutls_session_t	 clt_quic_ctx;

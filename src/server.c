@@ -1030,7 +1030,7 @@ server_input(struct client *clt)
 		}
 		event_del(&clt->clt_ev);
 		event_set(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
-		    EV_WRITE | EV_PERSIST, server_quic_ev_switch, clt);
+		    EV_PERSIST, server_quic_ev_switch, clt);
 		event_add(&clt->clt_ev, &srv_conf->timeout);
 		return;
 	}
@@ -1307,6 +1307,7 @@ server_quic_handshake(int fd, short event, void *arg)
 {
 	struct client *clt = (struct client *)arg;
 	struct server *srv = (struct server *)clt->clt_srv;
+	struct quic_event_option eopt;
 	int ret;
 
 	if (event == EV_TIMEOUT) {
@@ -1319,6 +1320,18 @@ server_quic_handshake(int fd, short event, void *arg)
 
 	ret = quic_handshake(clt->clt_quic_ctx);
 	if (ret == 0) {
+		eopt.type = QUIC_EVENT_CONNECTION_CLOSE;
+		eopt.on = 1;
+		ret = setsockopt(fd, SOL_QUIC, QUIC_SOCKOPT_EVENT, &eopt,
+		    sizeof(eopt));
+		if(ret)
+			server_close(clt, "quic sockopt cc event failed");
+		eopt.type = QUIC_EVENT_STREAM_UPDATE;
+		eopt.on = 1;
+		ret = setsockopt(fd, SOL_QUIC, QUIC_SOCKOPT_EVENT, &eopt,
+		    sizeof(eopt));
+		if(ret)
+			server_close(clt, "quic sockopt su event failed");
 		server_input(clt);
 	} else if (ret == TLS_WANT_POLLIN) {
 		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT|EV_READ,
@@ -1343,7 +1356,6 @@ server_quic_ev_switch(int fd, short event, void *arg)
 		server_close(clt, "quic timeout");
 	} else if (event & EV_READ) {
 		server_read_http3(fd, arg);
-	} else if (event & EV_WRITE) {
 	}
 }
 #endif
