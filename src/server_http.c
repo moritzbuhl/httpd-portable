@@ -901,6 +901,11 @@ server_abort_http(struct client *clt, unsigned int code, const char *msg)
 		return;
 	}
 
+	if (clt->clt_h3conn != NULL) {
+		server_abort_http3(clt, code, msg);
+		return;
+	}
+
 	if ((httperr = server_httperror_byid(code)) == NULL)
 		httperr = "Unknown Error";
 

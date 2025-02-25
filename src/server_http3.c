@@ -48,7 +48,6 @@
 #include "http.h"
 #include "patterns.h"
 
-void		 server_httpdesc_free(struct http_descriptor *); // XXX
 void		 server_http3conn_free(struct client *);
 void		 server_abort_http3(struct client *, unsigned int,
 		    const char *);
@@ -59,6 +58,8 @@ int		 server_http_authenticate(struct server_config *,
 void		 server_read_http3range(struct bufferevent *, void *);
 int		 server_writeheader_http3(struct client *, struct kv *,
 		    void *);
+char		*server_expand_http(struct client *, const char *,
+		    char *, size_t);
 
 static int
 h3_dyn_nva_init(struct h3_dyn_nva *dnva)
@@ -108,13 +109,13 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 
 	if ((nv->name = (uint8_t *)strdup(key)) == NULL)
 		return (-1); // XXX
-        nv->namelen = strlen(key);
+	nv->namelen = strlen(key);
 	if (value) {
 		if ((nv->value = (uint8_t *)strdup(value)) == NULL)
 			return (-1); // XXX
 		nv->valuelen = strlen(value);
 	}
-        /* XXX: make sure kvs are not deleted */
+	/* XXX: make sure kvs are not deleted */
 	/* nv->flags = NGHTTP3_NV_FLAG_NO_COPY_NAME |
 	    NGHTTP3_NV_FLAG_NO_COPY_VALUE; */
 
@@ -185,7 +186,6 @@ h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *na
 	struct http_descriptor	*desc = clt->clt_descreq;
 	char			*key = NULL;
 	char			*val = NULL;
-	struct kv		*hdr = NULL;
 	nghttp3_vec		 k = nghttp3_rcbuf_get_buf(name);
 	nghttp3_vec		 v = nghttp3_rcbuf_get_buf(value);
 
@@ -202,7 +202,7 @@ h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *na
 		desc->http_method = server_httpmethod_byname(val);
 		free(val);
 		if (desc->http_method == HTTP_METHOD_NONE) {
-			/* XXX server_abort_http3(clt, 400, "malformed"); */
+			server_abort_http3(clt, 400, "malformed");
 			return (-1);
 		}
 		break;
@@ -220,7 +220,7 @@ h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *na
 			return (-1);
 		}
 
-		if ((hdr = kv_add(&desc->http_headers, key, val)) == NULL)
+		if (kv_add(&desc->http_headers, key, val) == NULL)
 			return (-1);
 	}
 
@@ -290,6 +290,9 @@ h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings, void *arg
 static int
 h3_shutdown(nghttp3_conn *conn, int64_t id, void *arg)
 {
+	struct client		*clt = arg;
+
+	
 	log_debug("%s", __func__);
 	return (0);
 }
@@ -311,11 +314,13 @@ h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 	struct nghttp3_data_reader	 dr;
 
 	log_debug("%s", __func__);
+	clt->clt_h3cursid = sid;
 	h3_dyn_nva_reset(&clt->clt_h3dnva);
-	server_response3(httpd_env, clt);
+	if (server_response3(httpd_env, clt) == -1)
+		return (0); // XXX: throw error?
 
-        dr.read_data = h3_read_data;
-        return nghttp3_conn_submit_response(conn, sid, clt->clt_h3dnva.nva,
+	dr.read_data = h3_read_data;
+	return nghttp3_conn_submit_response(conn, sid, clt->clt_h3dnva.nva,
 	    clt->clt_h3dnva.nvlen, &dr);
 }
 
@@ -420,30 +425,100 @@ server_http3conn_free(struct client *clt)
 		h3_dyn_nva_free(&clt->clt_h3dnva);
 }
 
+ssize_t
+server_http3_recv(int s, char *buf, size_t len, int64_t *sid, uint32_t *flags)
+{
+	char msg_ctrl[CMSG_SPACE(sizeof(struct quic_stream_info))];
+	struct quic_stream_info info;
+	struct cmsghdr *cm = NULL;
+	struct msghdr msg;
+	struct iovec iov;
+	ssize_t n;
+
+	memset(&msg, 0, sizeof(msg));
+
+	iov.iov_base = buf;
+	iov.iov_len = len;
+
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	msg.msg_control = msg_ctrl;
+	msg.msg_controllen = sizeof(msg_ctrl);
+
+	n = recvmsg(s, &msg, *flags);
+	if (n < 0)
+		return n;
+
+	*flags = msg.msg_flags;
+
+	for (cm = CMSG_FIRSTHDR(&msg); cm != NULL; cm = CMSG_NXTHDR(&msg, cm))
+		if (cm->cmsg_level == IPPROTO_QUIC &&
+		    cm->cmsg_type == QUIC_STREAM_INFO)
+			break;
+	if (cm && cm->cmsg_len == CMSG_LEN(sizeof(struct quic_stream_info))) {
+		memcpy(&info, CMSG_DATA(cm), sizeof(struct quic_stream_info));
+		*sid = info.stream_id;
+		*flags |= info.stream_flags;
+	}
+	return n;
+}
+
+void
+server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
+{
+	union quic_event qev;
+
+	if(len < 1)
+		server_close(clt, "empty quic event");
+
+	switch(buf[0]) {
+	case QUIC_EVENT_STREAM_UPDATE:
+		struct quic_stream_update qsu;
+		if(len < 1 + sizeof(qsu))
+			server_close(clt, "malformed stream update event");
+		memcpy(&qsu, &buf[1], sizeof(qsu));
+		DPRINTF("%s: stream update id=%llu state=%u errcode=%u "
+		    "finalsz=%llu", __func__, qsu.id, qsu.state, qsu.errcode,
+		    qsu.finalsz);
+		break;
+	case QUIC_EVENT_CONNECTION_CLOSE:
+		struct quic_connection_close qcc;
+		char *phrase = &buf[1 + sizeof(qcc)];
+		if(len < 1 + sizeof(qcc))
+			server_close(clt, "malformed connection close event");
+		memcpy(&qcc, &buf[1], sizeof(qcc));
+		DPRINTF("%s: connection close errcode=%u frame=%hhu phrase=%s",
+		    __func__, qcc.errcode, qcc.frame, phrase);
+		clt->clt_done = 1;
+		break;
+	default:
+		server_close(clt, "unknown quic event");
+	}
+}
+
 void
 server_read_http3(int fd, void *arg)
 {
 	struct client		*clt = arg;
-	int64_t sid = -1;
-	uint32_t flags = 0;
-	int n, fin;
-	uint8_t buf[1500]; /* XXX */
+	int64_t			 sid = -1;
+	uint32_t		 flags = 0;
+	int			 n, fin;
+	uint8_t			 buf[1500]; /* XXX */
 
 	getmonotime(&clt->clt_tv_last);
 
-/*
-	DPRINTF("%s: session %d: size %lu, to read %lld",
-	    __func__, clt->clt_id, size, clt->clt_toread);
-	if (!size) {
-		clt->clt_toread = TOREAD_HTTP_HEADER;
-		goto done;
-	}
-*/
-
-	n = quic_recvmsg(clt->clt_s, &buf, sizeof(buf), &sid, &flags);
+	n = server_http3_recv(clt->clt_s, &buf, sizeof(buf), &sid, &flags);
 	if (n == -1) {
-		log_warn("%s quic_recvmsg", __func__);
+		log_warn("%s server_http3_recv", __func__);
 		goto fail;
+	}
+	DPRINTF("%s: sid=%lld, flags=%u, size=%d", __func__, sid, flags, n);
+
+	if (flags & MSG_NOTIFICATION) {
+		server_http3_quic_event(clt, buf, n, sid);
+		goto done;
 	}
 
 	fin = flags & MSG_STREAM_FIN;
@@ -452,6 +527,7 @@ server_read_http3(int fd, void *arg)
 		goto fail;
 	}
 
+ done:
 	if (clt->clt_done) {
 		server_close(clt, "done");
 		return;
@@ -459,10 +535,8 @@ server_read_http3(int fd, void *arg)
 	return;
  fail:
 	DPRINTF("%s: fail", __func__);
-	/* XXX: free the connection */
-/*
 	server_abort_http3(clt, 500, strerror(errno));
-*/
+	server_close(clt, "read error");
 	return;
 }
 
@@ -613,17 +687,19 @@ server_read_http3range(struct bufferevent *bev, void *arg)
 void
 server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 {
-	struct server_config	*srv_conf = clt->clt_srv_conf;
-	struct bufferevent	*bev = clt->clt_bev;
-	struct http_descriptor	*desc = clt->clt_descreq;
-	const char		*httperr = NULL, *style;
-	char			*httpmsg, *body = NULL, *extraheader = NULL;
-	char			 tmbuf[32], hbuf[128], *hstsheader = NULL;
-	char			*clenheader = NULL;
-	char			 buf[IBUF_READ_SIZE];
-	char			*escapedmsg = NULL;
-	char			 cstr[5];
-	ssize_t			 bodylen;
+	struct server_config		*srv_conf = clt->clt_srv_conf;
+	struct http_descriptor		*resp = clt->clt_descresp;
+	const char			*httperr = NULL, *style;
+	char				*httpmsg, *body = NULL;
+	char				 tmbuf[32], hbuf[128];
+	char				 buf[IBUF_READ_SIZE];
+	char				*escapedmsg = NULL;
+	char				 cstr[5];
+	ssize_t				 bodylen = 0;
+	struct kv			*cl;
+	struct nghttp3_data_reader	 dr;
+
+	DPRINTF("%s code=%u msg=%s", __func__, code, msg);
 
 	if (code == 0) {
 		server_close(clt, "dropped");
@@ -632,9 +708,6 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 
 	if ((httperr = server_httperror_byid(code)) == NULL)
 		httperr = "Unknown Error";
-
-	if (bev == NULL)
-		goto done;
 
 	if (server_log_http(clt, code, 0) == -1)
 		goto done;
@@ -658,10 +731,8 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 		memset(buf, 0, sizeof(buf));
 		if (server_expand_http(clt, msg, buf, sizeof(buf)) == NULL)
 			goto done;
-		if (asprintf(&extraheader, "Location: %s\r\n", buf) == -1) {
+		if (kv_add(&resp->http_headers, "Location", buf) == NULL)
 			code = 500;
-			extraheader = NULL;
-		}
 		msg = buf;
 		break;
 	case 401:
@@ -669,22 +740,17 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 			break;
 		if (stravis(&escapedmsg, msg, VIS_DQ) == -1) {
 			code = 500;
-			extraheader = NULL;
-		} else if (asprintf(&extraheader,
-		    "WWW-Authenticate: Basic realm=\"%s\"\r\n", escapedmsg)
-		    == -1) {
+		} else if ((cl = kv_add(&resp->http_headers, "WWW-Authenticate",
+		    NULL)) == NULL ||
+		    kv_set(cl, "Basic realm=\"%s\"", escapedmsg) == -1) {
 			code = 500;
-			extraheader = NULL;
 		}
 		break;
 	case 416:
 		if (msg == NULL)
 			break;
-		if (asprintf(&extraheader,
-		    "Content-Range: %s\r\n", msg) == -1) {
+		if (kv_add(&resp->http_headers, "Content-Range", msg) == NULL)
 			code = 500;
-			extraheader = NULL;
-		}
 		break;
 	default:
 		/*
@@ -699,6 +765,8 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 
 	free(escapedmsg);
 
+	if ((code >= 100 && code < 200) || code == 204)
+		goto send;
 	if ((srv_conf->flags & SRVFLAG_ERRDOCS) == 0)
 		goto builtin; /* errdocs not enabled */
 	if ((size_t)snprintf(cstr, sizeof(cstr), "%03u", code) >= sizeof(cstr))
@@ -744,58 +812,51 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 	}
 
  send:
+	if ((cl = kv_add(&resp->http_headers, ":status", NULL)) == NULL ||
+	    kv_set(cl, "%03d", code) == -1)
+		goto done;
+	if (kv_add(&resp->http_headers, "Date", tmbuf) == NULL)
+		goto done;
+	if (kv_add(&resp->http_headers, "Server", HTTPD_SERVERNAME) == NULL)
+		goto done;
+	if (kv_add(&resp->http_headers, "Content-Type", "text/html") == NULL)
+		goto done;
+
+	/* HSTS header */
 	if (srv_conf->flags & SRVFLAG_SERVER_HSTS &&
 	    srv_conf->flags & SRVFLAG_TLS) {
-		if (asprintf(&hstsheader, "Strict-Transport-Security: "
-		    "max-age=%d%s%s\r\n", srv_conf->hsts_max_age,
+		if ((cl =
+		    kv_add(&resp->http_headers, "Strict-Transport-Security",
+		    NULL)) == NULL ||
+		    kv_set(cl, "max-age=%d%s%s", srv_conf->hsts_max_age,
 		    srv_conf->hsts_flags & HSTSFLAG_SUBDOMAINS ?
 		    "; includeSubDomains" : "",
 		    srv_conf->hsts_flags & HSTSFLAG_PRELOAD ?
-		    "; preload" : "") == -1) {
-			hstsheader = NULL;
+		    "; preload" : "") == -1)
 			goto done;
-		}
 	}
 
-	if ((code >= 100 && code < 200) || code == 204)
-		clenheader = NULL;
-	else {
-		if (asprintf(&clenheader,
-		    "Content-Length: %zd\r\n", bodylen) == -1) {
-			clenheader = NULL;
+	if (bodylen) {
+		if ((cl = kv_add(&resp->http_headers, "Content-Length", NULL))
+		    == NULL || kv_set(cl, "%zd", bodylen) == -1)
 			goto done;
-		}
 	}
 
-	/* Add basic HTTP headers */
-	if (asprintf(&httpmsg,
-	    "HTTP/1.0 %03d %s\r\n"
-	    "Date: %s\r\n"
-	    "Server: %s\r\n"
-	    "Connection: close\r\n"
-	    "Content-Type: text/html\r\n"
-	    "%s"
-	    "%s"
-	    "%s"
-	    "\r\n"
-	    "%s",
-	    code, httperr, tmbuf, HTTPD_SERVERNAME,
-	    clenheader == NULL ? "" : clenheader,
-	    extraheader == NULL ? "" : extraheader,
-	    hstsheader == NULL ? "" : hstsheader,
-	    desc->http_method == HTTP_METHOD_HEAD || clenheader == NULL ?
-	    "" : body) == -1)
-		goto done;
+	if (server_headers(clt, resp, server_writeheader_http3, NULL) == -1)
+		log_warnx("%s: server_headers", __func__);
 
-	/* Dump the message without checking for success */
-	server_dump(clt, httpmsg, strlen(httpmsg));
-	free(httpmsg);
+	
+	dr.read_data = h3_read_data;
+	nghttp3_conn_submit_response(clt->clt_h3conn, clt->clt_h3cursid,
+	    clt->clt_h3dnva.nva, clt->clt_h3dnva.nvlen, &dr);
+
+	if (bodylen)
+		server_bufferevent_write(clt, body, bodylen);
 
  done:
 	free(body);
-	free(extraheader);
-	free(hstsheader);
-	free(clenheader);
+/*
+XXX: send no close because of stream multiplexing
 	if (msg == NULL)
 		msg = "\"\"";
 	if (asprintf(&httpmsg, "%s (%03d %s)", msg, code, httperr) == -1) {
@@ -804,6 +865,7 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 		server_close(clt, httpmsg);
 		free(httpmsg);
 	}
+*/
 }
 
 void
@@ -956,6 +1018,7 @@ server_response3(struct httpd *httpd, struct client *clt)
 			goto fail;
 
 		log_debug("%s: rewrote %s?%s -> %s?%s", __func__,
+
 		    desc->http_path, desc->http_query ? desc->http_query : "",
 		    path, query ? query : "");
 
@@ -995,22 +1058,22 @@ server_response3(struct httpd *httpd, struct client *clt)
 int
 server_writeheader_http3(struct client *clt, struct kv *hdr, void *arg)
 {
-        char                   	*ptr;
-        const char             	*key;
+	char		   	*ptr;
+	const char	     	*key;
 
-        /* The key might have been updated in the parent */
-        if (hdr->kv_parent != NULL && hdr->kv_parent->kv_key != NULL)
-                key = hdr->kv_parent->kv_key;
-        else
-                key = hdr->kv_key;
+	/* The key might have been updated in the parent */
+	if (hdr->kv_parent != NULL && hdr->kv_parent->kv_key != NULL)
+		key = hdr->kv_parent->kv_key;
+	else
+		key = hdr->kv_key;
 
-        ptr = hdr->kv_value;
-        if (h3_dyn_nva_add(&clt->clt_h3dnva, key, ptr) == -1)
-                return (-1);
-        DPRINTF("%s: %s: %s", __func__, key,
-            hdr->kv_value == NULL ? "" : hdr->kv_value);
+	ptr = hdr->kv_value;
+	if (h3_dyn_nva_add(&clt->clt_h3dnva, key, ptr) == -1)
+		return (-1);
+	DPRINTF("%s: %s: %s", __func__, key,
+	    hdr->kv_value == NULL ? "" : hdr->kv_value);
 
-        return (0);
+	return (0);
 }
 
 void 
