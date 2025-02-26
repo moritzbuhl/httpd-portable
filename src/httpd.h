@@ -320,6 +320,14 @@ struct range_data {
 	size_t			 range_total;
 };
 
+struct client;
+struct h3_stream_evbuf {
+	struct client		*clt;
+	struct evbuffer		*eb;
+	int64_t			 sid;
+	int			 eof;
+};
+
 struct client {
 	uint32_t		 clt_id;
 	pid_t			 clt_pid;
@@ -342,7 +350,7 @@ struct client {
 
 	nghttp3_conn		*clt_h3conn;
 	struct h3_dyn_nva	 clt_h3dnva;
-	int64_t			*clt_h3cursid;
+	struct h3_stream_evbuf	*clt_h3seb;
 
 	int			 clt_fd;
 	gnutls_session_t	 clt_quic_ctx;
@@ -724,6 +732,8 @@ char	*replace_var(char *, const char *, const char *);
 char	*read_errdoc(const char *, const char *);
 
 /* server_http3.c */
+void	 server_write3(struct bufferevent *, void *);
+void	 server_read3(struct bufferevent *, void *);
 void	 server_http3(void);
 void	 server_read_http3(int, void *);
 int	 server_http3conn_init(struct client *);
@@ -735,6 +745,7 @@ void	 server_response_http3(struct evbuffer *, size_t, size_t, void *);
 /* server_file.c */
 int	 server_file(struct httpd *, struct client *);
 void	 server_file_error(struct bufferevent *, short, void *);
+void	 server_file_error3(struct bufferevent *, short, void *);
 
 /* server_fcgi.c */
 int	 server_fcgi(struct httpd *, struct client *);
