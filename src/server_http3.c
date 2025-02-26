@@ -130,57 +130,60 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 }
 
 static nghttp3_ssize
-h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vec, size_t veccnt, uint32_t *pflags, void *arg, void *sarg)
+h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vec, size_t veccnt,
+    uint32_t *pflags, void *arg, void *sarg)
 {
-	struct client		*clt = arg;
-	size_t			 tot = 0;
+	struct h3_stream_evbuf	*sb = sarg;
+	size_t			 len, written = 0;
 	int			 n, i;
 
-	n = evbuffer_peek(clt->clt_output, -1, NULL,
+	len = EVBUFFER_LENGTH(sb->eb);
+	n = evbuffer_peek(sb->eb, -1, NULL,
 	    (struct evbuffer_iovec *)vec, veccnt);
 
 	for (i = 0; i < n; i++)
-		tot += vec[i].len;
-
-	/* XXX: delete tot bytes from clt_output once they are sent */
-
-	log_debug("%s EVBUFFER_LENGTH=%llu tot=%llu", __func__, EVBUFFER_LENGTH(clt->clt_output), tot);
-	if (EVBUFFER_LENGTH(clt->clt_output) == tot)
+		written += vec[i].len;
+	if (written == len)
 		*pflags |= NGHTTP3_DATA_FLAG_EOF;
 
 	return n;
 }
 
 static int
-h3_acked_stream_data(nghttp3_conn *conn, int64_t sid, uint64_t datalen, void *arg, void *sarg)
+h3_acked_stream_data(nghttp3_conn *conn, int64_t sid, uint64_t len, void *arg,
+    void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_stream_close(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code, void *arg, void *sarg)
+h3_stream_close(nghttp3_conn *conn, int64_t sid, uint64_t error, void *arg,
+    void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_deferred_consume(nghttp3_conn *conn, int64_t sid, size_t nconsumed, void *arg, void *sarg)
+h3_deferred_consume(nghttp3_conn *conn, int64_t sid, size_t n, void *arg,
+    void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
 h3_begin_headers(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
+h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token,
+    nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg,
+    void *sarg)
 {
 	struct client		*clt = arg;
 	struct http_descriptor	*desc = clt->clt_descreq;
@@ -189,8 +192,6 @@ h3_recv_header(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *na
 	nghttp3_vec		 k = nghttp3_rcbuf_get_buf(name);
 	nghttp3_vec		 v = nghttp3_rcbuf_get_buf(value);
 
-	log_debug("%s: sid=%lld %.*s: %.*s", __func__, sid, (int)k.len, k.base,
-	    (int)v.len, v.base); /* XXX: remove me */
 
 	if (asprintf(&val, "%.*s", (int)v.len, v.base) == -1) {
 		log_warn("asprintf");
@@ -233,7 +234,7 @@ h3_end_headers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 	struct client		*clt = arg;
 	struct http_descriptor  *desc = clt->clt_descreq;
 
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	if (desc->http_method == HTTP_METHOD_NONE)
 		return (-1);
 	if (desc->http_path == NULL)
@@ -241,80 +242,97 @@ h3_end_headers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 	if ((desc->http_version = strdup("HTTP/3")) == NULL)
 		return (-1);
 
-	clt->clt_headersdone = 1;
+	clt->clt_headersdone = 1; // XXX
 	return (0);
 }
 
 static int
 h3_begin_trailers(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
 h3_recv_trailer(nghttp3_conn *conn, int64_t sid, int32_t token, nghttp3_rcbuf *name, nghttp3_rcbuf *value, uint8_t flags, void *arg, void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
 h3_end_trailers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_stop_sending(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code, void *arg, void *sarg)
+h3_stop_sending(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code,
+    void *arg, void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_reset_stream(nghttp3_conn *conn, int64_t sid, uint64_t app_error_code, void *arg, void *sarg)
+h3_reset_stream(nghttp3_conn *conn, int64_t sid, uint64_t error, void *arg,
+    void *sarg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings, void *arg)
+h3_recv_settings(nghttp3_conn *conn, const nghttp3_settings *settings,
+    void *arg)
 {
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
 h3_shutdown(nghttp3_conn *conn, int64_t id, void *arg)
 {
-	struct client		*clt = arg;
-
-	
-	log_debug("%s", __func__);
+	DPRINTF("%s", __func__);
 	return (0);
 }
 
 static int
-h3_recv_data(nghttp3_conn *conn, int64_t sid, const uint8_t *data, size_t datalen, void *arg, void *sarg)
+h3_recv_data(nghttp3_conn *conn, int64_t sid, const uint8_t *data, size_t len,
+    void *arg, void *sarg)
 {
-	log_info("%.s", datalen, data);
-
-	log_debug("%s: %lu", __func__, datalen);
+	DPRINTF("%s: len=%lu", __func__, len);
+	DPRINTF("%.s", len, data);
 	return (0);
 }
 
 static int
 h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
-	struct client		*clt = arg;
-	struct http_descriptor	*resp = clt->clt_descresp;
+	struct client			*clt = arg;
+	struct http_descriptor		*resp = clt->clt_descresp;
+	struct evbuffer			*eb;
 	struct nghttp3_data_reader	 dr;
 
-	log_debug("%s", __func__);
-	clt->clt_h3cursid = sid;
+	DPRINTF("%s", __func__);
+
+	if ((clt->clt_h3seb = malloc(sizeof(struct h3_stream_evbuf))) == NULL) {
+		server_close(clt, "failed to allocate stream event buffer");
+		return (-1);
+	}
+	if ((eb = evbuffer_new()) == NULL) {
+		server_close(clt, "failed to allocate stream buffer");
+		return (-1);
+	}
+	evbuffer_setcb(eb, server_response_http3, clt->clt_h3seb);
+	nghttp3_conn_set_stream_user_data(conn, sid, clt->clt_h3seb);
+	clt->clt_h3seb->clt = clt;
+	clt->clt_h3seb->eb = eb;
+	clt->clt_h3seb->sid = sid;
+	clt->clt_h3seb->eof = 0;
+
+	kv_purge(&clt->clt_descresp->http_headers);
 	h3_dyn_nva_reset(&clt->clt_h3dnva);
 	if (server_response3(httpd_env, clt) == -1)
 		return (0); // XXX: throw error?
@@ -411,7 +429,7 @@ server_http3conn_init(struct client *clt)
 		return (-1);
 	}
 
-	log_debug("%s ctrl=%llu enc=%llu dec=%llu", __func__, ctrl, enc, dec);
+	DPRINTF("%s ctrl=%llu enc=%llu dec=%llu", __func__, ctrl, enc, dec);
 
 	return (0);
 }
@@ -496,6 +514,67 @@ server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
 	default:
 		server_close(clt, "unknown quic event");
 	}
+}
+
+void
+server_read3(struct bufferevent *bev, void *arg)
+{
+	struct h3_stream_evbuf	*sb = arg;
+	struct client		*clt = sb->clt;
+	struct h3_stream_evbuf	*tmp = clt->clt_h3seb;
+	struct evbuffer		*src = EVBUFFER_INPUT(bev);
+
+	getmonotime(&clt->clt_tv_last);
+
+	if (!EVBUFFER_LENGTH(src))
+		return;
+	clt->clt_h3seb = sb;
+	if (server_bufferevent_write_buffer(clt, src) == -1)
+		goto fail;
+	clt->clt_h3seb = tmp;
+	if (clt->clt_done)
+		goto done;
+
+	if (clt->clt_bev && EVBUFFER_LENGTH(EVBUFFER_OUTPUT(clt->clt_bev))
+	    > (size_t) SERVER_MAX_PREFETCH * clt->clt_sndbufsiz) {
+		bufferevent_disable(clt->clt_srvbev, EV_READ);
+		clt->clt_srvbev_throttled = 1;
+	}
+
+	return;
+ done:
+	(*bev->errorcb)(bev, EVBUFFER_READ, bev->cbarg);
+	return;
+ fail:
+	clt->clt_h3seb = tmp;
+	server_close(clt, strerror(errno));
+}
+
+void
+server_write3(struct bufferevent *bev, void *arg)
+{
+	struct h3_stream_evbuf	*sb = arg;
+	struct client	  	*clt = sb->clt;
+	struct evbuffer		*dst = EVBUFFER_OUTPUT(bev);
+
+	if (EVBUFFER_LENGTH(dst) == 0 &&
+	    clt->clt_toread == TOREAD_HTTP_NONE)
+		goto done;
+
+	getmonotime(&clt->clt_tv_last);
+
+	if (clt->clt_done)
+		goto done;
+
+	if (clt->clt_srvbev && clt->clt_srvbev_throttled) {
+		bufferevent_enable(clt->clt_srvbev, EV_READ);
+		clt->clt_srvbev_throttled = 0;
+	}
+
+	return;
+ done:
+	(*bev->errorcb)(bev, EVBUFFER_WRITE, bev->cbarg);
+	return;
 }
 
 void
@@ -847,11 +926,13 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 
 	
 	dr.read_data = h3_read_data;
-	nghttp3_conn_submit_response(clt->clt_h3conn, clt->clt_h3cursid,
+	nghttp3_conn_submit_response(clt->clt_h3conn, clt->clt_h3seb->sid,
 	    clt->clt_h3dnva.nva, clt->clt_h3dnva.nvlen, &dr);
 
-	if (bodylen)
+	if (bodylen) {
+		clt->clt_h3seb->eof = 1;
 		server_bufferevent_write(clt, body, bodylen);
+	}
 
  done:
 	free(body);
@@ -1058,8 +1139,8 @@ server_response3(struct httpd *httpd, struct client *clt)
 int
 server_writeheader_http3(struct client *clt, struct kv *hdr, void *arg)
 {
-	char		   	*ptr;
-	const char	     	*key;
+	char		*ptr;
+	const char	*key;
 
 	/* The key might have been updated in the parent */
 	if (hdr->kv_parent != NULL && hdr->kv_parent->kv_key != NULL)
@@ -1079,34 +1160,42 @@ server_writeheader_http3(struct client *clt, struct kv *hdr, void *arg)
 void 
 server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
 {
-	struct client		*clt = arg;
+	struct h3_stream_evbuf	*sb = arg;
+	struct client		*clt = sb->clt;
 	struct iovec		 iovs[16];
 	int64_t			 sid = -1;
 	ssize_t			 nvs;
 	int			 n, fin = 0, flags;
 
-	if (old > now) {
-		DPRINTF("%s: old=%lld, now=%lld", __func__, old, now);
-		/* XXX: if now == 0, then do some of the things from server_file_error. */
+	DPRINTF("%s: old=%llu now=%llu", __func__, old, now);
+
+	if (old > now)
 		return;
-	}
 
 	while ((nvs = nghttp3_conn_writev_stream(clt->clt_h3conn, &sid, &fin,
 	    (struct nghttp3_vec *)iovs, 16)) != 0) {
 		if (nvs < 0) {
 			log_warnx("nghttp3_conn_writev_stream");
-			return;
+			goto out;
 		}
 
 		flags = (fin) ?  MSG_STREAM_FIN : 0;
 		if ((n = quic_sendmsg(clt->clt_s, iovs, nvs, sid, flags)) < 0) {
 			log_warn("quic_sendmsg");
-			return;
+			goto out;
 		}
 
 		if (nghttp3_conn_add_write_offset(clt->clt_h3conn, sid, n)) {
 			log_warnx("nghttp3_conn_add_write_offset");
-			return;
+			goto out;
 		}
+		if (sid == sb->sid)
+			evbuffer_drain(sb->eb, n);
 	}
+ out:
+	if (sb->eof && EVBUFFER_LENGTH(sb->eb) == 0) {
+		evbuffer_free(sb->eb);
+		free(sb);
+	}
+	return;
 }
