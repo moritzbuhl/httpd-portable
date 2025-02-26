@@ -138,14 +138,14 @@ h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vec, size_t veccnt,
 	int			 n, i;
 
 	len = EVBUFFER_LENGTH(sb->eb);
+	if (len == 0)
+		return NGHTTP3_ERR_WOULDBLOCK;
 	n = evbuffer_peek(sb->eb, -1, NULL,
 	    (struct evbuffer_iovec *)vec, veccnt);
-
 	for (i = 0; i < n; i++)
 		written += vec[i].len;
-	if (written == len)
+	if (sb->eof && written == len)
 		*pflags |= NGHTTP3_DATA_FLAG_EOF;
-
 	return n;
 }
 
@@ -1172,6 +1172,7 @@ server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
 	if (old > now)
 		return;
 
+	nghttp3_conn_resume_stream(clt->clt_h3conn, sb->sid);
 	while ((nvs = nghttp3_conn_writev_stream(clt->clt_h3conn, &sid, &fin,
 	    (struct nghttp3_vec *)iovs, 16)) != 0) {
 		if (nvs < 0) {
