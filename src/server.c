@@ -1278,7 +1278,6 @@ server_accept(int fd, short event, void *arg)
 			server_close(clt, "failed to init quic socket");
 			return;
 		}
-		evbuffer_setcb(clt->clt_output, server_response_http3, clt);
 		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT|EV_READ,
 		    server_quic_handshake, &clt->clt_tv_start,
 		    &srv->srv_conf.timeout, clt);
@@ -1649,6 +1648,8 @@ server_bufferevent_printf(struct client *clt, const char *fmt, ...)
 int
 server_bufferevent_print(struct client *clt, const char *str)
 {
+	if (clt->clt_h3conn)
+		return (evbuffer_add(clt->clt_h3seb->eb, str, strlen(str)));
 	if (clt->clt_bev == NULL)
 		return (evbuffer_add(clt->clt_output, str, strlen(str)));
 	return (bufferevent_write(clt->clt_bev, str, strlen(str)));
@@ -1657,6 +1658,8 @@ server_bufferevent_print(struct client *clt, const char *str)
 int
 server_bufferevent_write_buffer(struct client *clt, struct evbuffer *buf)
 {
+	if (clt->clt_h3conn)
+		return (evbuffer_add_buffer(clt->clt_h3seb->eb, buf));
 	if (clt->clt_bev == NULL)
 		return (evbuffer_add_buffer(clt->clt_output, buf));
 	return (bufferevent_write_buffer(clt->clt_bev, buf));
@@ -1676,6 +1679,8 @@ server_bufferevent_write_chunk(struct client *clt,
 int
 server_bufferevent_write(struct client *clt, void *data, size_t size)
 {
+	if (clt->clt_h3conn)
+		return (evbuffer_add(clt->clt_h3seb->eb, data, size));
 	if (clt->clt_bev == NULL)
 		return (evbuffer_add(clt->clt_output, data, size));
 	return (bufferevent_write(clt->clt_bev, data, size));

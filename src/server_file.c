@@ -315,8 +315,13 @@ server_file_request(struct httpd *env, struct client *clt, struct media_type
 		bufferevent_free(clt->clt_srvbev);
 
 	clt->clt_srvbev_throttled = 0;
-	clt->clt_srvbev = bufferevent_new(clt->clt_fd, server_read,
-	    server_write, server_file_error, clt);
+	if (clt->clt_h3conn) {
+		clt->clt_srvbev = bufferevent_new(clt->clt_fd, server_read3,
+		    server_write3, server_file_error3, clt->clt_h3seb);
+	} else {
+		clt->clt_srvbev = bufferevent_new(clt->clt_fd, server_read,
+		    server_write, server_file_error, clt);
+	}
 	if (clt->clt_srvbev == NULL) {
 		errstr = "failed to allocate file buffer event";
 		goto fail;
@@ -684,9 +689,6 @@ server_file_error(struct bufferevent *bev, short error, void *arg)
 
 		clt->clt_done = 1;
 
-		if (!clt->clt_bev)
-			return;
-
 		src = EVBUFFER_INPUT(clt->clt_bev);
 
 		/* Close the connection if a previous pipeline is empty */
@@ -719,6 +721,42 @@ server_file_error(struct bufferevent *bev, short error, void *arg)
 
 		server_close(clt, "done");
 		return;
+	}
+	server_close(clt, "unknown event error");
+	return;
+}
+
+void
+server_file_error3(struct bufferevent *bev, short error, void *arg)
+{
+	struct h3_stream_evbuf	*sb = arg;
+	struct client		*clt = sb->clt;
+	struct evbuffer		*src, *dst;
+
+	if (error & EVBUFFER_TIMEOUT) {
+		server_close(clt, "buffer event timeout");
+		return;
+	}
+	if (error & EVBUFFER_ERROR) {
+		if (errno == EFBIG) {
+			bufferevent_enable(bev, EV_READ);
+			return;
+		}
+		server_close(clt, "buffer event error");
+		return;
+	}
+	if (error & EVBUFFER_EOF) {
+		bufferevent_disable(bev, EV_READ|EV_WRITE);
+		sb->eof = 1;
+		return;
+	}
+	if (error & (EVBUFFER_READ|EVBUFFER_WRITE)) {
+		bufferevent_disable(bev, EV_READ|EV_WRITE);
+
+		/* XXX: do things similar to server_file_error */
+
+		clt->clt_done = 1;
+		server_close(clt, "done"); // XXX
 	}
 	server_close(clt, "unknown event error");
 	return;
