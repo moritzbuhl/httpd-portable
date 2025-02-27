@@ -324,6 +324,7 @@ struct client;
 struct h3_stream_evbuf {
 	struct client		*clt;
 	struct evbuffer		*eb;
+	struct evbuffer_ptr	 ep;
 	int64_t			 sid;
 	int			 eof;
 };

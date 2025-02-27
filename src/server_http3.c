@@ -148,10 +148,12 @@ h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vecs, size_t nvs,
 		}
 		return NGHTTP3_ERR_WOULDBLOCK;
 	}
-	n = evbuffer_peek(sb->eb, -1, NULL,
+	evbuffer_ptr_set(sb->eb, &sb->ep, sb->ep.pos, EVBUFFER_PTR_SET);
+	n = evbuffer_peek(sb->eb, -1, &sb->ep,
 	    (struct evbuffer_iovec *)vecs, nvs);
 	for (i = 0; i < n; i++)
 		written += vecs[i].len;
+	evbuffer_ptr_set(sb->eb, &sb->ep, written, EVBUFFER_PTR_ADD);
 	if (sb->eof && written == len)
 		*pflags |= NGHTTP3_DATA_FLAG_EOF;
 	DPRINTF("%s: n=%d written=%llu len=%llu", __func__, n, written, len);
@@ -166,6 +168,7 @@ h3_acked_stream_data(nghttp3_conn *conn, int64_t sid, uint64_t len, void *arg,
 	DPRINTF("%s sid=%lld len=%llu", __func__, sid, len);
 
 	evbuffer_drain(sb->eb, len);
+	evbuffer_ptr_set(sb->eb, &sb->ep, sb->ep.pos - len, EVBUFFER_PTR_SET);
 	if (sb->eof) {
 		if (EVBUFFER_LENGTH(sb->eb) == 0) {
 			evbuffer_free(sb->eb);
@@ -354,6 +357,7 @@ h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 	clt->clt_h3seb->eb = eb;
 	clt->clt_h3seb->sid = sid;
 	clt->clt_h3seb->eof = 0;
+	evbuffer_ptr_set(eb, &clt->clt_h3seb->ep, 0, EVBUFFER_PTR_SET);
 
 	kv_purge(&clt->clt_descresp->http_headers);
 	h3_dyn_nva_reset(&clt->clt_h3dnva);
