@@ -1030,7 +1030,7 @@ server_input(struct client *clt)
 		}
 		event_del(&clt->clt_ev);
 		event_set(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
-		    EV_PERSIST, server_quic_ev_switch, clt);
+		    EV_WRITE | EV_PERSIST, server_quic_ev_switch, clt);
 		event_add(&clt->clt_ev, &srv_conf->timeout);
 		return;
 	}
@@ -1354,7 +1354,13 @@ server_quic_ev_switch(int fd, short event, void *arg)
 	if (event & EV_TIMEOUT) {
 		server_close(clt, "quic timeout");
 	} else if (event & EV_READ) {
-		server_read_http3(fd, arg);
+		server_read_http3(fd, clt);
+	} else if (event & EV_WRITE) {
+		/* XXX: this is a hack to keep sending with nghttp3 */
+		if (clt->clt_h3seb)
+			nghttp3_conn_unblock_stream(clt->clt_h3conn,
+			    clt->clt_h3seb->sid);
+		server_response_http3(clt);
 	}
 }
 #endif
