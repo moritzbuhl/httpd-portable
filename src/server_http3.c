@@ -130,22 +130,31 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 }
 
 static nghttp3_ssize
-h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vec, size_t veccnt,
+h3_read_data(nghttp3_conn *conn, int64_t sid, nghttp3_vec *vecs, size_t nvs,
     uint32_t *pflags, void *arg, void *sarg)
 {
 	struct h3_stream_evbuf	*sb = sarg;
 	size_t			 len, written = 0;
 	int			 n, i;
 
+	// XXX: we can get rid of written, just do one more round to set pflags
+
 	len = EVBUFFER_LENGTH(sb->eb);
-	if (len == 0)
+	if (len == 0) {
+		DPRINTF("%s: returning eof=%d or bock", __func__, sb->eof);
+		if (sb->eof) {
+			*pflags |= NGHTTP3_DATA_FLAG_EOF;
+			return 0;
+		}
 		return NGHTTP3_ERR_WOULDBLOCK;
+	}
 	n = evbuffer_peek(sb->eb, -1, NULL,
-	    (struct evbuffer_iovec *)vec, veccnt);
+	    (struct evbuffer_iovec *)vecs, nvs);
 	for (i = 0; i < n; i++)
-		written += vec[i].len;
+		written += vecs[i].len;
 	if (sb->eof && written == len)
 		*pflags |= NGHTTP3_DATA_FLAG_EOF;
+	DPRINTF("%s: n=%d written=%llu len=%llu", __func__, n, written, len);
 	return n;
 }
 
@@ -153,7 +162,21 @@ static int
 h3_acked_stream_data(nghttp3_conn *conn, int64_t sid, uint64_t len, void *arg,
     void *sarg)
 {
-	DPRINTF("%s", __func__);
+	struct h3_stream_evbuf	*sb = sarg;
+	DPRINTF("%s sid=%lld len=%llu", __func__, sid, len);
+
+	evbuffer_drain(sb->eb, len);
+	if (sb->eof) {
+		if (EVBUFFER_LENGTH(sb->eb) == 0) {
+			evbuffer_free(sb->eb);
+			free(sb);
+			return (0);
+		}
+		/* XXX: server_response_http3_stream will no longer be called
+		 * because eb is filled. We need to schedule more quic_sendmsg
+		 * calls to drain eb.
+		 */
+	}
 	return (0);
 }
 
@@ -325,7 +348,7 @@ h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 		server_close(clt, "failed to allocate stream buffer");
 		return (-1);
 	}
-	evbuffer_setcb(eb, server_response_http3, clt->clt_h3seb);
+	evbuffer_setcb(eb, server_response_http3_stream, clt->clt_h3seb);
 	nghttp3_conn_set_stream_user_data(conn, sid, clt->clt_h3seb);
 	clt->clt_h3seb->clt = clt;
 	clt->clt_h3seb->eb = eb;
@@ -1158,45 +1181,77 @@ server_writeheader_http3(struct client *clt, struct kv *hdr, void *arg)
 }
 
 void 
-server_response_http3(struct evbuffer *buf, size_t old, size_t now, void *arg)
+server_response_http3_stream(struct evbuffer *buf, size_t old, size_t now,
+    void *arg)
 {
 	struct h3_stream_evbuf	*sb = arg;
 	struct client		*clt = sb->clt;
 	struct iovec		 iovs[16];
 	int64_t			 sid = -1;
 	ssize_t			 nvs;
-	int			 n, fin = 0, flags;
+	int			 n, fin;
 
-	DPRINTF("%s: old=%llu now=%llu", __func__, old, now);
+	DPRINTF("%s: old=%llu now=%llu sb->sid=%lld sb=%p", __func__, old, now, sb->sid, sb);
 
-	if (old > now)
+	if (old > now) {
+		if (!sb->eof && now != 0) {
+			/*
+			 * evbuffer_drain was called by h3_acked_stream_data,
+			 * which means quic_sendmsg and
+			 * nghttp3_conn_add_ack_offset from
+			 * server_response_http3 were called but it was not
+			 * possible to send all data.
+			 */
+			DPRINTF("%s: blocking sid=%lld", __func__, sb->sid);
+			nghttp3_conn_block_stream(clt->clt_h3conn, sb->sid);
+		}
 		return;
+	}
 
+	DPRINTF("%s: resuming sid=%lld", __func__, sb->sid);
 	nghttp3_conn_resume_stream(clt->clt_h3conn, sb->sid);
-	while ((nvs = nghttp3_conn_writev_stream(clt->clt_h3conn, &sid, &fin,
-	    (struct nghttp3_vec *)iovs, 16)) != 0) {
+	server_response_http3(sb->clt);
+}
+
+void 
+server_response_http3(struct client *clt)
+{
+	struct iovec	iovs[16];
+	int64_t		sid = -1;
+	ssize_t		nvs;
+	int		n, fin;
+
+	while (1) {
+		fin = 0;
+		nvs = nghttp3_conn_writev_stream(clt->clt_h3conn, &sid, &fin,
+		    (struct nghttp3_vec *)iovs, 16);
 		if (nvs < 0) {
-			log_warnx("nghttp3_conn_writev_stream");
-			goto out;
+			log_warnx("nghttp3_conn_writev_stream: %lld", nvs);
+			break;
 		}
-
-		flags = (fin) ?  MSG_STREAM_FIN : 0;
-		if ((n = quic_sendmsg(clt->clt_s, iovs, nvs, sid, flags)) < 0) {
+		if (sid == -1)
+			break;
+		if (fin)
+			fin = MSG_STREAM_FIN;
+		if ((n = quic_sendmsg(clt->clt_s, iovs, nvs, sid, fin)) == -1) {
 			log_warn("quic_sendmsg");
-			goto out;
+			break;
 		}
-
+		DPRINTF("%s: n=%d nvs=%lld sid=%lld fin=%d", __func__, n,
+		    nvs, sid, fin);
+// XXX: need to block the stream and unblock it once the socket/stream is ready to write again
+		if (n == 0 && !fin) {
+			DPRINTF("%s: blocking sid=%lld", __func__, sid);
+			nghttp3_conn_block_stream(clt->clt_h3conn, sid);
+			//break;
+		}
 		if (nghttp3_conn_add_write_offset(clt->clt_h3conn, sid, n)) {
 			log_warnx("nghttp3_conn_add_write_offset");
-			goto out;
+			break;
 		}
-		if (sid == sb->sid)
-			evbuffer_drain(sb->eb, n);
+		if (nghttp3_conn_add_ack_offset(clt->clt_h3conn, sid, n)) {
+			log_warnx("nghttp3_conn_add_write_offset");
+			break;
+		}
 	}
- out:
-	if (sb->eof && EVBUFFER_LENGTH(sb->eb) == 0) {
-		evbuffer_free(sb->eb);
-		free(sb);
-	}
-	return;
 }
