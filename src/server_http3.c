@@ -108,16 +108,16 @@ h3_dyn_nva_add(struct h3_dyn_nva *dnva, const char *key, char *value)
 	struct nghttp3_nv *nv = &(dnva->nva[dnva->nvlen]);
 
 	if ((nv->name = (uint8_t *)strdup(key)) == NULL)
-		return (-1); // XXX
+		return (-1);
 	nv->namelen = strlen(key);
 	if (value) {
-		if ((nv->value = (uint8_t *)strdup(value)) == NULL)
-			return (-1); // XXX
+		if ((nv->value = (uint8_t *)strdup(value)) == NULL) {
+			free(nv->name);
+			nv->namelen = 0;
+			return (-1);
+		}
 		nv->valuelen = strlen(value);
 	}
-	/* XXX: make sure kvs are not deleted */
-	/* nv->flags = NGHTTP3_NV_FLAG_NO_COPY_NAME |
-	    NGHTTP3_NV_FLAG_NO_COPY_VALUE; */
 
 	dnva->nvlen++;
 	if (dnva->nvlen == dnva->nvsize) {
@@ -163,7 +163,6 @@ h3_acked_stream_data(nghttp3_conn *conn, int64_t sid, uint64_t len, void *arg,
     void *sarg)
 {
 	struct h3_stream_evbuf	*sb = sarg;
-	DPRINTF("%s sid=%lld len=%llu", __func__, sid, len);
 
 	evbuffer_drain(sb->eb, len);
 	if (sb->ep.pos > 0) {
@@ -267,7 +266,6 @@ h3_end_headers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 	if ((desc->http_version = strdup("HTTP/3")) == NULL)
 		return (-1);
 
-	clt->clt_headersdone = 1; // XXX
 	return (0);
 }
 
@@ -361,7 +359,7 @@ h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 	kv_purge(&clt->clt_descresp->http_headers);
 	h3_dyn_nva_reset(&clt->clt_h3dnva);
 	if (server_response3(httpd_env, clt) == -1)
-		return (0); // XXX: throw error?
+		return (0); /* called server_abort_http3 */
 
 	dr.read_data = h3_read_data;
 	return nghttp3_conn_submit_response(conn, sid, clt->clt_h3dnva.nva,
@@ -610,7 +608,7 @@ server_read_http3(int fd, void *arg)
 	int64_t			 sid = -1;
 	uint32_t		 flags = 0;
 	int			 n, fin;
-	uint8_t			 buf[1500]; /* XXX */
+	char			 buf[65536];
 
 	getmonotime(&clt->clt_tv_last);
 
@@ -619,13 +617,10 @@ server_read_http3(int fd, void *arg)
 		log_warn("%s server_http3_recv", __func__);
 		goto fail;
 	}
-	DPRINTF("%s: sid=%lld, flags=%u, size=%d", __func__, sid, flags, n);
-
 	if (flags & MSG_NOTIFICATION) {
 		server_http3_quic_event(clt, buf, n, sid);
 		goto done;
 	}
-
 	fin = flags & MSG_STREAM_FIN;
 	if (nghttp3_conn_read_stream(clt->clt_h3conn, sid, buf, n, fin) < 0) {
 		log_warnx("%s nghttp3_conn_read_stream", __func__);
@@ -639,154 +634,9 @@ server_read_http3(int fd, void *arg)
 	}
 	return;
  fail:
-	DPRINTF("%s: fail", __func__);
 	server_abort_http3(clt, 500, strerror(errno));
 	server_close(clt, "read error");
 	return;
-}
-
-void
-server_read_http3content(int fd, void *arg)
-{
-	struct client		*clt = arg;
-
-	getmonotime(&clt->clt_tv_last);
-
-/*
-	DPRINTF("%s: session %d: size %lu, to read %lld", __func__,
-	    clt->clt_id, size, clt->clt_toread);
-*/
-
-/*
-	if (clt->clt_toread > 0) {
-		// Read content data
-		if ((off_t)size > clt->clt_toread) {
-			size = clt->clt_toread;
-			if (fcgi_add_stdin(clt, src) == -1)
-				goto fail;
-			clt->clt_toread = 0;
-		} else {
-			if (fcgi_add_stdin(clt, src) == -1)
-				goto fail;
-			clt->clt_toread -= size;
-		}
-		DPRINTF("%s: done, size %lu, to read %lld", __func__,
-		    size, clt->clt_toread);
-	}
-	if (clt->clt_toread == 0) {
-		fcgi_add_stdin(clt, NULL);
-		clt->clt_toread = TOREAD_HTTP_HEADER;
-		bufferevent_disable(bev, EV_READ);
-		bev->readcb = server_read_http;
-		return;
-	}
-	if (clt->clt_done)
-		goto done;
-	if (bev->readcb != server_read_httpcontent)
-		bev->readcb(bev, arg);
-
-*/
-	return;
- done:
-	return;
- fail:
-	server_close(clt, strerror(errno));
-}
-
-void
-server_read_http3range(struct bufferevent *bev, void *arg)
-{
-	struct client		*clt = arg;
-	struct evbuffer		*src = EVBUFFER_INPUT(bev);
-	size_t			 size;
-	struct media_type	*media;
-	struct range_data	*r = &clt->clt_ranges;
-	struct range		*range;
-
-	getmonotime(&clt->clt_tv_last);
-
-	if (r->range_toread > 0) {
-		size = EVBUFFER_LENGTH(src);
-		if (!size)
-			return;
-
-		/* Read chunk data */
-		if ((off_t)size > r->range_toread) {
-			size = r->range_toread;
-			if (server_bufferevent_write_chunk(clt, src, size)
-			    == -1)
-				goto fail;
-			r->range_toread = 0;
-		} else {
-			if (server_bufferevent_write_buffer(clt, src) == -1)
-				goto fail;
-			r->range_toread -= size;
-		}
-		if (r->range_toread < 1)
-			r->range_toread = TOREAD_HTTP_RANGE;
-		DPRINTF("%s: done, size %lu, to read %lld", __func__,
-		    size, r->range_toread);
-	}
-
-	switch (r->range_toread) {
-	case TOREAD_HTTP_RANGE:
-		if (r->range_index >= r->range_count) {
-			if (r->range_count > 1) {
-				/* Add end marker */
-				if (server_bufferevent_printf(clt,
-				    "\r\n--%llu--\r\n",
-				    clt->clt_boundary) == -1)
-					goto fail;
-			}
-			r->range_toread = TOREAD_HTTP_NONE;
-			break;
-		}
-
-		range = &r->range[r->range_index];
-
-		if (r->range_count > 1) {
-			media = r->range_media;
-			if (server_bufferevent_printf(clt,
-			    "\r\n--%llu\r\n"
-			    "Content-Type: %s/%s\r\n"
-			    "Content-Range: bytes %lld-%lld/%zu\r\n\r\n",
-			    clt->clt_boundary,
-			    media->media_type, media->media_subtype,
-			    range->start, range->end, r->range_total) == -1)
-				goto fail;
-		}
-		r->range_toread = range->end - range->start + 1;
-
-		if (lseek(clt->clt_fd, range->start, SEEK_SET) == -1)
-			goto fail;
-
-		/* Throw away bytes that are already in the input buffer */
-		evbuffer_drain(src, EVBUFFER_LENGTH(src));
-
-		/* Increment for the next part */
-		r->range_index++;
-		break;
-	case TOREAD_HTTP_NONE:
-		goto done;
-	case 0:
-		break;
-	}
-
-	if (clt->clt_done)
-		goto done;
-
-	if (EVBUFFER_LENGTH(EVBUFFER_OUTPUT(clt->clt_bev)) > (size_t)
-	    SERVER_MAX_PREFETCH * clt->clt_sndbufsiz) {
-		bufferevent_disable(clt->clt_srvbev, EV_READ);
-		clt->clt_srvbev_throttled = 1;
-	}
-
-	return;
- done:
-	(*bev->errorcb)(bev, EVBUFFER_READ, bev->cbarg);
-	return;
- fail:
-	server_close(clt, strerror(errno));
 }
 
 void
@@ -962,17 +812,6 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 
  done:
 	free(body);
-/*
-XXX: send no close because of stream multiplexing
-	if (msg == NULL)
-		msg = "\"\"";
-	if (asprintf(&httpmsg, "%s (%03d %s)", msg, code, httperr) == -1) {
-		server_close(clt, msg);
-	} else {
-		server_close(clt, httpmsg);
-		free(httpmsg);
-	}
-*/
 }
 
 void
@@ -1025,10 +864,6 @@ server_response3(struct httpd *httpd, struct client *clt)
 	else
 		clt->clt_persist = 0;
 
-	/*
-	 * Do we have a Host header and matching configuration?
-	 * XXX: is this necessary for H3?
-	 */
 	if (host != NULL) {
 		if ((hostval = server_http_parsehost(host->kv_value,
 		    hostname, sizeof(hostname), &portval)) == NULL)

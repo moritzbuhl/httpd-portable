@@ -841,7 +841,7 @@ server_socket_listen(struct sockaddr_storage *ss, in_port_t port,
 		if (setsockopt(s, SOL_QUIC, QUIC_SOCKOPT_ALPN, alpn,
 		    strlen(alpn)))
 			goto bad;
-		srv_conf->tcpbacklog = 1; // XXX: default of 0 disables listen
+		srv_conf->tcpbacklog = 1; /* default of 0 disables listen */
 	}
 #endif
 	if (listen(s, srv_conf->tcpbacklog) == -1)
