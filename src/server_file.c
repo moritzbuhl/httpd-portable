@@ -311,14 +311,14 @@ server_file_request(struct httpd *env, struct client *clt, struct media_type
 	}
 
 	clt->clt_fd = fd;
-	if (clt->clt_srvbev != NULL) /* XXX: cannot do this for h3? multiple srvbev should be able to exist? */
-		bufferevent_free(clt->clt_srvbev);
 
 	clt->clt_srvbev_throttled = 0;
 	if (clt->clt_h3conn) {
 		clt->clt_srvbev = bufferevent_new(clt->clt_fd, server_read3,
 		    server_write3, server_file_error3, clt->clt_h3seb);
 	} else {
+		if (clt->clt_srvbev != NULL)
+			bufferevent_free(clt->clt_srvbev);
 		clt->clt_srvbev = bufferevent_new(clt->clt_fd, server_read,
 		    server_write, server_file_error, clt);
 	}
@@ -751,6 +751,7 @@ server_file_error3(struct bufferevent *bev, short error, void *arg)
 		sb->eof = 1;
 		/* stream will no longer block as all data is read. */
 		nghttp3_conn_resume_stream(sb->clt->clt_h3conn, sb->sid);
+		bufferevent_free(bev);
 		return;
 	}
 	if (error & (EVBUFFER_READ|EVBUFFER_WRITE)) {
