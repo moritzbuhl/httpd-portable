@@ -685,7 +685,7 @@ int	 server_bufferevent_add(struct event *, int);
 #endif
 int	 server_bufferevent_write(struct client *, void *, size_t);
 struct server *
-	 server_byaddr(struct sockaddr *, in_port_t);
+	 server_byaddr(struct sockaddr *, in_port_t, int);
 struct server_config *
 	 serverconfig_byid(uint32_t);
 int	 server_foreach(int (*)(struct server *,

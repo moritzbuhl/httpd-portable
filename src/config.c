@@ -645,8 +645,8 @@ config_getserver(struct httpd *env, struct imsg *imsg)
 	}
 
 	/* Check if server with matching listening socket already exists */
-	if ((srv = server_byaddr((struct sockaddr *)
-	    &srv_conf.ss, srv_conf.port)) != NULL) {
+	if ((srv = server_byaddr((struct sockaddr *) &srv_conf.ss,
+	    srv_conf.port, !!(srv_conf.flags & SRVFLAG_QUIC))) != NULL) {
 		/* Add "host" to existing listening server */
 		if (fd != -1) {
 			if (srv->srv_s == -1)
