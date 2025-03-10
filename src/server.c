@@ -574,14 +574,15 @@ serverconfig_reset(struct server_config *srv_conf)
 }
 
 struct server *
-server_byaddr(struct sockaddr *addr, in_port_t port)
+server_byaddr(struct sockaddr *addr, in_port_t port, int quic)
 {
 	struct server	*srv;
 
 	TAILQ_FOREACH(srv, httpd_env->sc_servers, srv_entry) {
 		if (port == srv->srv_conf.port &&
 		    sockaddr_cmp((struct sockaddr *)&srv->srv_conf.ss,
-		    addr, srv->srv_conf.prefixlen) == 0)
+		    addr, srv->srv_conf.prefixlen) == 0 &&
+		    quic == !!(srv->srv_conf.flags & SRVFLAG_QUIC))
 			return (srv);
 	}
 
@@ -656,6 +657,9 @@ server_match(struct server *s2, int match_name)
 		    (struct sockaddr *)&s1->srv_conf.ss,
 		    (struct sockaddr *)&s2->srv_conf.ss,
 		    s1->srv_conf.prefixlen) != 0)
+			continue;
+		if ((s1->srv_conf.flags & (SRVFLAG_QUIC|SRVFLAG_TLS)) !=
+		    (s2->srv_conf.flags & (SRVFLAG_QUIC|SRVFLAG_TLS)))
 			continue;
 
 		return (s1);
