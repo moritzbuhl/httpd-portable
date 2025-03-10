@@ -335,8 +335,11 @@ server_file_request(struct httpd *env, struct client *clt, struct media_type
 	bufferevent_settimeout(clt->clt_srvbev,
 	    srv_conf->timeout.tv_sec, srv_conf->timeout.tv_sec);
 	bufferevent_enable(clt->clt_srvbev, EV_READ);
-	if (clt->clt_bev)
+	if (clt->clt_h3conn) {
+		clt->clt_srvbev = NULL;
+	} else {
 		bufferevent_disable(clt->clt_bev, EV_READ);
+	}
 
  done:
 	server_reset_http(clt);
