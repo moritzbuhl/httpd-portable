@@ -559,12 +559,6 @@ server_read3(struct bufferevent *bev, void *arg)
 	if (clt->clt_done)
 		goto done;
 
-	if (clt->clt_bev && EVBUFFER_LENGTH(EVBUFFER_OUTPUT(clt->clt_bev))
-	    > (size_t) SERVER_MAX_PREFETCH * clt->clt_sndbufsiz) {
-		bufferevent_disable(clt->clt_srvbev, EV_READ);
-		clt->clt_srvbev_throttled = 1;
-	}
-
 	return;
  done:
 	(*bev->errorcb)(bev, EVBUFFER_READ, bev->cbarg);
@@ -589,11 +583,6 @@ server_write3(struct bufferevent *bev, void *arg)
 
 	if (clt->clt_done)
 		goto done;
-
-	if (clt->clt_srvbev && clt->clt_srvbev_throttled) {
-		bufferevent_enable(clt->clt_srvbev, EV_READ);
-		clt->clt_srvbev_throttled = 0;
-	}
 
 	return;
  done:
