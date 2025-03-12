@@ -352,6 +352,7 @@ struct client {
 	nghttp3_conn		*clt_h3conn;
 	struct h3_dyn_nva	 clt_h3dnva;
 	struct h3_stream_evbuf	*clt_h3seb;
+	uint64_t		 clt_h3write;
 
 	int			 clt_fd;
 	gnutls_session_t	 clt_quic_ctx;
@@ -665,6 +666,7 @@ int	 server_socket_connect(struct sockaddr_storage *, in_port_t,
 void	 server_write(struct bufferevent *, void *);
 void	 server_read(struct bufferevent *, void *);
 void	 server_error(struct bufferevent *, short, void *);
+void	 server_quic_ev_switch(int, short, void *);
 void	 server_log(struct client *, const char *);
 void	 server_sendlog(struct server_config *, int, const char *, ...)
 	    __attribute__((__format__ (printf, 3, 4)));

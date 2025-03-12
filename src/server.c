@@ -1033,8 +1033,8 @@ server_input(struct client *clt)
 			return;
 		}
 		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
-		    EV_WRITE, server_quic_ev_switch, &clt->clt_tv_start,
-		    &srv->srv_conf.timeout, clt);
+		    EV_PERSIST, server_quic_ev_switch, &clt->clt_tv_start,
+		    &srv_conf->timeout, clt);
 		return;
 	}
 #endif
@@ -1253,6 +1253,8 @@ server_accept(int fd, short event, void *arg)
 
 	getmonotime(&clt->clt_tv_start);
 	memcpy(&clt->clt_tv_last, &clt->clt_tv_start, sizeof(clt->clt_tv_last));
+	memcpy(&clt->clt_timeout, &srv->srv_conf.timeout,
+	    sizeof(&srv->srv_conf.timeout));
 
 	server_clients++;
 	SPLAY_INSERT(client_tree, &srv->srv_clients, clt);
