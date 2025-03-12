@@ -61,13 +61,6 @@ gnutls_session_t quic_server_session_init(int s, gnutls_certificate_credentials_
 
 	return session;
 
-/* XXX
-	if (alpns) {
-		alpn_len = sizeof(alpn);
-		ret = quic_session_get_alpn(session, alpn, &alpn_len);
-	}
-*/
-
 err_session:
 	gnutls_deinit(session);
 err:
