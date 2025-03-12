@@ -36,20 +36,8 @@ gnutls_certificate_credentials_t quic_server_init(const char *pkey, size_t pkey_
 
 int quic_handshake(gnutls_session_t session);
 
-int quic_session_get_data(gnutls_session_t session,
-			  void *data, size_t *size);
-int quic_session_set_data(gnutls_session_t session,
-			  const void *data, size_t size);
-
-int quic_session_get_alpn(gnutls_session_t session,
-			  void *data, size_t *size);
 int quic_session_set_alpn(gnutls_session_t session,
 			  const void *data, size_t size);
 
 ssize_t quic_sendmsg(int sockfd, struct iovec *iov, unsigned int nvs,
 		     int64_t sid, uint32_t flags);
-ssize_t quic_recvmsg(int sockfd, void *msg, size_t len,
-		     int64_t *sid, uint32_t *flags);
-
-void quic_set_log_func(void (*func)(int level, const char *msg));
-void quic_set_log_level(int level);

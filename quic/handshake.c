@@ -48,7 +48,7 @@ struct quic_ctx {
 	uint8_t completed:1;
 };
 
-static int quic_log_level = LOG_DEBUG;
+static int quic_log_level = LOG_ERR;
 static void (*quic_log_func)(int level, const char *msg);
 
 /**
@@ -131,79 +131,6 @@ void quic_log_error(char const *fmt, ...)
 void quic_log_gnutls_error(int error)
 {
 	quic_log_error("gnutls: %s (%d)", gnutls_strerror(error), error);
-}
-
-/**
- * quic_set_log_level - change the log_level
- * @level: the level it changes to (LOG_XXX from sys/syslog.h)
- *
- */
-void quic_set_log_level(int level)
-{
-	quic_log_level = level;
-}
-
-/**
- * quic_set_log_func - change the log func
- * @func: the log func it changes to
- *
- */
-void quic_set_log_func(void (*func)(int level, const char *msg))
-{
-	quic_log_func = func;
-}
-
-/**
- * quic_recvmsg - receive msg and also get stream ID and flag
- * @sockfd: IPPROTO_QUIC type socket
- * @msg: msg buffer
- * @len: msg buffer length
- * @sid: stream ID got from kernel
- * @flag: stream flag got from kernel
- *
- * Return values:
- * - On success, the number of bytes received is returned.
- * - On error, -1 is returned, and errno is set to indicate the error.
- */
-ssize_t quic_recvmsg(int sockfd, void *msg, size_t len, int64_t *sid, uint32_t *flags)
-{
-	char incmsg[CMSG_SPACE(sizeof(struct quic_stream_info))];
-	struct quic_stream_info info;
-	struct cmsghdr *cmsg = NULL;
-	struct msghdr inmsg;
-	struct iovec iov;
-	ssize_t ret;
-
-	memset(&inmsg, 0, sizeof(inmsg));
-
-	iov.iov_base = msg;
-	iov.iov_len = len;
-
-	inmsg.msg_name = NULL;
-	inmsg.msg_namelen = 0;
-	inmsg.msg_iov = &iov;
-	inmsg.msg_iovlen = 1;
-	inmsg.msg_control = incmsg;
-	inmsg.msg_controllen = sizeof(incmsg);
-
-	ret = recvmsg(sockfd, &inmsg, flags ? (int)*flags : 0);
-	if (ret < 0)
-		return ret;
-
-	if (flags)
-		*flags = inmsg.msg_flags;
-
-	for (cmsg = CMSG_FIRSTHDR(&inmsg); cmsg != NULL; cmsg = CMSG_NXTHDR(&inmsg, cmsg))
-		if (IPPROTO_QUIC == cmsg->cmsg_level && QUIC_STREAM_INFO == cmsg->cmsg_type)
-			break;
-	if (cmsg) {
-		memcpy(&info, CMSG_DATA(cmsg), sizeof(struct quic_stream_info));
-		if (sid)
-			*sid = info.stream_id;
-		if (flags)
-			*flags |= info.stream_flags;
-	}
-	return ret;
 }
 
 /**
@@ -631,78 +558,6 @@ out:
 	}
 	// free(ctx); // XXX
 	return ret < 0 ? ret : 0;
-}
-
-/**
- * quic_session_get_data - Get session data from a TLS session
- * @session: TLS session
- * @data: pre-allocated buffer to hold session data
- * @size: session data's size
- *
- * Return values:
- * - On success, 0 is returned.
- * - On error, a negative error value is returned.
- */
-int quic_session_get_data(gnutls_session_t session, void *data, size_t *size)
-{
-	int ret, sockfd = gnutls_transport_get_int(session);
-	unsigned int len = *size;
-
-	if (getsockopt(sockfd, SOL_QUIC, QUIC_SOCKOPT_SESSION_TICKET, data, &len)) {
-		quic_log_error("socket getsockopt session ticket error %d", errno);
-		return -errno;
-	}
-	if (!len) {
-		*size = 0;
-		return 0;
-	}
-
-	ret = quic_handshake_process(session, QUIC_CRYPTO_APP, data, len);
-	if (ret)
-		return ret;
-	return gnutls_session_get_data(session, data, size);
-}
-
-/**
- * quic_session_set_data - Set session data to a TLS session
- * @session: TLS session
- * @data: buffer to hold the session
- * @size: session data's size
- *
- * Return values:
- * - On success, 0 is returned.
- * - On error, a negative error value is returned.
- */
-int quic_session_set_data(gnutls_session_t session, const void *data, size_t size)
-{
-	return gnutls_session_set_data(session, data, size);
-}
-
-/**
- * quic_session_get_alpn - Get session alpn from a TLS session
- * @session: TLS session
- * @data: pre-allocated string buffer to hold session alpn
- * @size: session alpn's size
- *
- * Return values:
- * - On success, 0 is returned.
- * - On error, a negative error value is returned.
- */
-int quic_session_get_alpn(gnutls_session_t session, void *alpn, size_t *size)
-{
-	gnutls_datum_t alpn_data;
-	int ret;
-
-	ret = gnutls_alpn_get_selected_protocol(session, &alpn_data);
-	if (ret)
-		return ret;
-
-	if (*size < alpn_data.size)
-		return -EINVAL;
-
-	memcpy(alpn, alpn_data.data, alpn_data.size);
-	*size = alpn_data.size;
-	return 0;
 }
 
 /**
