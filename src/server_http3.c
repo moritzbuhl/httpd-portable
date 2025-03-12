@@ -468,14 +468,15 @@ server_http3conn_free(struct client *clt)
 }
 
 ssize_t
-server_http3_recv(int s, char *buf, size_t len, int64_t *sid, uint32_t *flags)
+server_http3_recv(struct client *clt, char *buf, size_t len, int64_t *sid,
+    uint32_t *flags)
 {
-	char msg_ctrl[CMSG_SPACE(sizeof(struct quic_stream_info))];
-	struct quic_stream_info info;
-	struct cmsghdr *cm = NULL;
 	struct msghdr msg;
+	struct cmsghdr *cm = NULL;
 	struct iovec iov;
 	ssize_t n;
+	struct quic_stream_info info;
+	char cmsgbuf[CMSG_SPACE(sizeof(info))];
 
 	memset(&msg, 0, sizeof(msg));
 
@@ -486,11 +487,11 @@ server_http3_recv(int s, char *buf, size_t len, int64_t *sid, uint32_t *flags)
 	msg.msg_namelen = 0;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
-	msg.msg_control = msg_ctrl;
-	msg.msg_controllen = sizeof(msg_ctrl);
+	msg.msg_control = cmsgbuf;
+	msg.msg_controllen = sizeof(cmsgbuf);
 
-	n = recvmsg(s, &msg, *flags);
-	if (n < 0)
+	n = recvmsg(clt->clt_s, &msg, *flags);
+	if (n == -1)
 		return n;
 
 	*flags = msg.msg_flags;
@@ -499,12 +500,40 @@ server_http3_recv(int s, char *buf, size_t len, int64_t *sid, uint32_t *flags)
 		if (cm->cmsg_level == IPPROTO_QUIC &&
 		    cm->cmsg_type == QUIC_STREAM_INFO)
 			break;
-	if (cm && cm->cmsg_len == CMSG_LEN(sizeof(struct quic_stream_info))) {
-		memcpy(&info, CMSG_DATA(cm), sizeof(struct quic_stream_info));
+	if (cm && cm->cmsg_len == CMSG_LEN(sizeof(info))) {
+		memcpy(&info, CMSG_DATA(cm), sizeof(info));
 		*sid = info.stream_id;
 		*flags |= info.stream_flags;
 	}
 	return n;
+}
+
+ssize_t
+server_http3_send(struct client *clt, struct iovec *iov, unsigned int nvs,
+    int64_t sid, int fin)
+{
+	struct msghdr msg;
+	struct cmsghdr *cm;
+	struct quic_stream_info *info;
+	char cmsgbuf[CMSG_SPACE(sizeof(*info))];
+
+	msg.msg_name = NULL;
+	msg.msg_namelen = 0;
+	msg.msg_iov = iov;
+	msg.msg_iovlen = nvs;
+	msg.msg_control = cmsgbuf;
+	msg.msg_controllen = sizeof(cmsgbuf);
+
+	cm = CMSG_FIRSTHDR(&msg);
+	cm->cmsg_level = IPPROTO_QUIC;
+	cm->cmsg_type = 0;
+	cm->cmsg_len = CMSG_LEN(sizeof(*info));
+
+	info = (struct quic_stream_info *)CMSG_DATA(cm);
+	info->stream_id = sid;
+	info->stream_flags = fin ? MSG_STREAM_FIN : 0;
+
+	return sendmsg(clt->clt_s, &msg, 0);
 }
 
 void
@@ -524,6 +553,18 @@ server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
 		DPRINTF("%s: stream update id=%llu state=%u errcode=%u "
 		    "finalsz=%llu", __func__, qsu.id, qsu.state, qsu.errcode,
 		    qsu.finalsz);
+		break;
+	case QUIC_EVENT_STREAM_MAX_DATA:
+		struct quic_stream_max_data qsmd;
+		if(len < 1 + sizeof(qsmd))
+			server_close(clt, "malformed stream max data event");
+		memcpy(&qsmd, &buf[1], sizeof(qsmd));
+		DPRINTF("%s: stream max data id=%llu max_data=%llu", __func__,
+		    qsmd.id, qsmd.max_data);
+		if (nghttp3_conn_unblock_stream(clt->clt_h3conn, qsmd.id)) {
+			log_warnx("nghttp3_conn_unblock_stream");
+			server_close(clt, "cannot unblock stream");
+		}
 		break;
 	case QUIC_EVENT_CONNECTION_CLOSE:
 		struct quic_connection_close qcc;
@@ -601,9 +642,9 @@ server_read_http3(int fd, void *arg)
 
 	getmonotime(&clt->clt_tv_last);
 
-	n = server_http3_recv(clt->clt_s, &buf, sizeof(buf), &sid, &flags);
-	if (n == -1) {
-		log_warn("%s server_http3_recv", __func__);
+	if ((n = server_http3_recv(clt, &buf, sizeof(buf), &sid, &flags)) ==
+	    -1) {
+		log_warnx("server_http3_recv");
 		goto fail;
 	}
 	if (flags & MSG_NOTIFICATION) {
@@ -612,7 +653,7 @@ server_read_http3(int fd, void *arg)
 	}
 	fin = flags & MSG_STREAM_FIN;
 	if (nghttp3_conn_read_stream(clt->clt_h3conn, sid, buf, n, fin) < 0) {
-		log_warnx("%s nghttp3_conn_read_stream", __func__);
+		log_warnx("nghttp3_conn_read_stream");
 		goto fail;
 	}
 
@@ -1039,12 +1080,14 @@ server_response_http3(struct client *clt)
 		}
 		if (sid == -1)
 			break;
-		if (fin)
-			fin = MSG_STREAM_FIN;
-		if ((n = quic_sendmsg(clt->clt_s, iovs, nvs, sid, fin)) == -1) {
+		if ((n = server_http3_send(clt, iovs, nvs, sid, fin)) == -1) {
+			if (errno == ENOSPC) {
+				nghttp3_conn_block_stream(clt->clt_h3conn, sid);
+				break;
+			}
 			if (errno == EAGAIN)
 				break;
-			log_warn("quic_sendmsg");
+			log_warn("server_http3_send");
 			break;
 		}
 		if (nghttp3_conn_add_write_offset(clt->clt_h3conn, sid, n)) {
