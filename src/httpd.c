@@ -515,7 +515,8 @@ event_again(struct event *ev, int fd, short event,
 	if (timercmp(&tv_next, &tv, >))
 		memcpy(&tv, &tv_next, sizeof(tv));
 
-	event_del(ev);
+	if (ev->ev_base)
+		event_del(ev);
 	event_set(ev, fd, event, fn, arg);
 	event_add(ev, &tv);
 }
