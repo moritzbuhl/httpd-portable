@@ -133,45 +133,6 @@ void quic_log_gnutls_error(int error)
 	quic_log_error("gnutls: %s (%d)", gnutls_strerror(error), error);
 }
 
-/**
- * quic_sendmsg - send msg with stream ID and flag
- * @sockfd: IPPROTO_QUIC type socket
- * @iov: iovecs to send
- * @nvs: the number of iovs
- * @sid: stream ID
- * @flag: stream flag
- *
- * Return values:
- * - On success, the number of bytes sent is returned.
- * - On error, -1 is returned, and errno is set to indicate the error.
- */
-ssize_t quic_sendmsg(int sockfd, struct iovec *iov, unsigned int nvs, int64_t sid, uint32_t flags)
-{
-	char outcmsg[CMSG_SPACE(sizeof(struct quic_stream_info))];
-	struct quic_stream_info *info;
-	struct msghdr outmsg;
-	struct cmsghdr *cmsg;
-
-	outmsg.msg_name = NULL;
-	outmsg.msg_namelen = 0;
-	outmsg.msg_iov = iov;
-	outmsg.msg_iovlen = nvs;
-	outmsg.msg_control = outcmsg;
-	outmsg.msg_controllen = sizeof(outcmsg);
-
-	cmsg = CMSG_FIRSTHDR(&outmsg);
-	cmsg->cmsg_level = IPPROTO_QUIC;
-	cmsg->cmsg_type = 0;
-	cmsg->cmsg_len = CMSG_LEN(sizeof(*info));
-
-	outmsg.msg_controllen = cmsg->cmsg_len;
-	info = (struct quic_stream_info *)CMSG_DATA(cmsg);
-	info->stream_id = sid;
-	info->stream_flags = (flags & QUIC_MSG_STREAM_FLAGS);
-
-	return sendmsg(sockfd, &outmsg, (int)(flags & ~QUIC_MSG_STREAM_FLAGS));
-}
-
 static uint32_t quic_tls_cipher_type(gnutls_cipher_algorithm_t cipher)
 {
 	switch (cipher) {

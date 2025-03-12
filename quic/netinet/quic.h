@@ -38,6 +38,3 @@ int quic_handshake(gnutls_session_t session);
 
 int quic_session_set_alpn(gnutls_session_t session,
 			  const void *data, size_t size);
-
-ssize_t quic_sendmsg(int sockfd, struct iovec *iov, unsigned int nvs,
-		     int64_t sid, uint32_t flags);
