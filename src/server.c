@@ -1032,10 +1032,9 @@ server_input(struct client *clt)
 			server_close(clt, "failed to initialize h3 connection");
 			return;
 		}
-		event_del(&clt->clt_ev);
-		event_set(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
-		    EV_WRITE | EV_PERSIST, server_quic_ev_switch, clt);
-		event_add(&clt->clt_ev, &srv_conf->timeout);
+		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
+		    EV_WRITE, server_quic_ev_switch, &clt->clt_tv_start,
+		    &srv->srv_conf.timeout, clt);
 		return;
 	}
 #endif
