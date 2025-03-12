@@ -755,6 +755,14 @@ server_file_error3(struct bufferevent *bev, short error, void *arg)
 		/* stream will no longer block as all data is read. */
 		nghttp3_conn_resume_stream(sb->clt->clt_h3conn, sb->sid);
 		bufferevent_free(bev);
+		/*
+		 * File reads will no longer happen and therefore no longer
+		 * call server_response_http3. Enable write events for the
+		 * QUIC socket to flush the buffer. */
+		clt->clt_h3write++;
+		event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT | EV_READ |
+		    EV_WRITE | EV_PERSIST, server_quic_ev_switch,
+		    &clt->clt_tv_start, &clt->clt_timeout, clt);
 		return;
 	}
 	if (error & (EVBUFFER_READ|EVBUFFER_WRITE)) {

@@ -266,6 +266,7 @@ h3_end_headers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 	if ((desc->http_version = strdup("HTTP/3")) == NULL)
 		return (-1);
 
+	server_response_http3(clt);
 	return (0);
 }
 
@@ -1059,7 +1060,7 @@ server_response_http3_stream(struct evbuffer *buf, size_t old, size_t now,
 		return;
 
 	nghttp3_conn_resume_stream(clt->clt_h3conn, sb->sid);
-	//server_response_http3(clt); /* XXX: does this help? */
+	server_response_http3(clt);
 }
 
 void 
@@ -1098,5 +1099,9 @@ server_response_http3(struct client *clt)
 			log_warnx("nghttp3_conn_add_write_offset");
 			break;
 		}
+		if (fin && --clt->clt_h3write == 0)
+			event_again(&clt->clt_ev, clt->clt_s, EV_TIMEOUT |
+			    EV_READ | EV_PERSIST, server_quic_ev_switch,
+			    &clt->clt_tv_start, &clt->clt_timeout, clt);
 	}
 }
