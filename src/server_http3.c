@@ -498,7 +498,7 @@ server_http3_recv(struct client *clt, char *buf, size_t len, int64_t *sid,
 	*flags = msg.msg_flags;
 
 	for (cm = CMSG_FIRSTHDR(&msg); cm != NULL; cm = CMSG_NXTHDR(&msg, cm))
-		if (cm->cmsg_level == IPPROTO_QUIC &&
+		if (cm->cmsg_level == SOL_QUIC &&
 		    cm->cmsg_type == QUIC_STREAM_INFO)
 			break;
 	if (cm && cm->cmsg_len == CMSG_LEN(sizeof(info))) {
@@ -526,7 +526,7 @@ server_http3_send(struct client *clt, struct iovec *iov, unsigned int nvs,
 	msg.msg_controllen = sizeof(cmsgbuf);
 
 	cm = CMSG_FIRSTHDR(&msg);
-	cm->cmsg_level = IPPROTO_QUIC;
+	cm->cmsg_level = SOL_QUIC;
 	cm->cmsg_type = 0;
 	cm->cmsg_len = CMSG_LEN(sizeof(*info));
 
