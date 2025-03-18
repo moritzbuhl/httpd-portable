@@ -546,6 +546,7 @@ server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
 		server_close(clt, "empty quic event");
 
 	switch(buf[0]) {
+#ifdef DEBUG
 	case QUIC_EVENT_STREAM_UPDATE:
 		struct quic_stream_update qsu;
 		if(len < 1 + sizeof(qsu))
@@ -555,6 +556,7 @@ server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
 		    "finalsz=%llu", __func__, qsu.id, qsu.state, qsu.errcode,
 		    qsu.finalsz);
 		break;
+#endif
 	case QUIC_EVENT_STREAM_MAX_DATA:
 		struct quic_stream_max_data qsmd;
 		if(len < 1 + sizeof(qsmd))

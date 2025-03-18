@@ -1330,7 +1330,15 @@ server_quic_handshake(int fd, short event, void *arg)
 		    sizeof(eopt));
 		if(ret)
 			server_close(clt, "quic sockopt cc event failed");
+#ifdef DEBUG
 		eopt.type = QUIC_EVENT_STREAM_UPDATE;
+		eopt.on = 1;
+		ret = setsockopt(fd, SOL_QUIC, QUIC_SOCKOPT_EVENT, &eopt,
+		    sizeof(eopt));
+		if(ret)
+			server_close(clt, "quic sockopt su event failed");
+#endif
+		eopt.type = QUIC_EVENT_STREAM_MAX_DATA;
 		eopt.on = 1;
 		ret = setsockopt(fd, SOL_QUIC, QUIC_SOCKOPT_EVENT, &eopt,
 		    sizeof(eopt));
