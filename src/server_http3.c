@@ -1085,6 +1085,7 @@ server_response_http3(struct client *clt)
 			break;
 		if ((n = server_http3_send(clt, iovs, nvs, sid, fin)) == -1) {
 			if (errno == ENOSPC) {
+				/* XXX: should we stop the evbuffer event? */
 				nghttp3_conn_block_stream(clt->clt_h3conn, sid);
 				break;
 			}
