@@ -850,6 +850,9 @@ server_tls_readcb(int fd, short event, void *arg)
 #endif
 	if (evbuffer_add(bufev->input, rbuf, len) == -1) {
 		what |= EVBUFFER_ERROR;
+#ifdef HAVE_LIBEVENT2
+		evbuffer_freeze(bufev->input, 0);
+#endif
 		goto err;
 	}
 #ifdef HAVE_LIBEVENT2
@@ -905,19 +908,17 @@ server_tls_writecb(int fd, short event, void *arg)
 			goto err;
 		}
 		len = ret;
+#ifdef HAVE_LIBEVENT2
+		evbuffer_unfreeze(bufev->output, 1);
+#endif
 		evbuffer_drain(bufev->output, len);
+#ifdef HAVE_LIBEVENT2
+		evbuffer_freeze(bufev->output, 1);
+#endif
 	}
 
 	if (EVBUFFER_LENGTH(bufev->output) != 0)
-#ifdef HAVE_LIBEVENT2
-	    {
-		evbuffer_unfreeze(bufev->output, 1);
-#endif
 		server_bufferevent_add(&bufev->ev_write, bufev->timeout_write);
-#ifdef HAVE_LIBEVENT2
-		evbuffer_freeze(bufev->output, 1);
-	}
-#endif
 
 	if (bufev->writecb != NULL &&
 	    EVBUFFER_LENGTH(bufev->output) <= bufev->wm_write.low)
