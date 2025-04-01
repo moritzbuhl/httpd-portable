@@ -86,6 +86,7 @@ check_linker_flag(C "LINKER:-z,now,-z,relro" HAVE_LD_Z)
 
 if(CMAKE_BUILD_TYPE STREQUAL DEBUG)
 	message("Debug build.")
+	add_definitions(-DDEBUG)
 elseif(CMAKE_BUILD_TYPE STREQUAL RELEASE)
 	message("Release build.")
 endif()
