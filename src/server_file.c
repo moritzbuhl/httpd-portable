@@ -328,9 +328,9 @@ server_file_request(struct httpd *env, struct client *clt, struct media_type
 	}
 
 	/* Adjust read watermark to the optimal file io size */
-	bufsiz = MAXIMUM(st->st_blksize, 64 * 1024);
-	bufferevent_setwatermark(clt->clt_srvbev, EV_READ, 0,
-	    bufsiz);
+	bufsiz = MAXIMUM(st->st_blksize, 1280 * 1024);
+	bufferevent_setwatermark(clt->clt_srvbev, EV_READ, 
+	    clt->clt_h3conn ? bufsiz : 0, 10 * bufsiz);
 
 	bufferevent_settimeout(clt->clt_srvbev,
 	    srv_conf->timeout.tv_sec, srv_conf->timeout.tv_sec);
@@ -459,9 +459,9 @@ server_partial_file_request(struct httpd *env, struct client *clt,
 	}
 
 	/* Adjust read watermark to the optimal file io size */
-	bufsiz = MAXIMUM(st->st_blksize, 64 * 1024);
-	bufferevent_setwatermark(clt->clt_srvbev, EV_READ, 0,
-	    bufsiz);
+	bufsiz = MAXIMUM(st->st_blksize, 1280 * 1024);
+	bufferevent_setwatermark(clt->clt_srvbev, EV_READ, 0, /* XXX */
+	    10 * bufsiz);
 
 	bufferevent_settimeout(clt->clt_srvbev,
 	    srv_conf->timeout.tv_sec, srv_conf->timeout.tv_sec);
@@ -750,6 +750,8 @@ server_file_error3(struct bufferevent *bev, short error, void *arg)
 		return;
 	}
 	if (error & EVBUFFER_EOF) {
+		/* cause a write to flush the bytes ignored by the watermark */
+		server_read3(bev, arg);
 		bufferevent_disable(bev, EV_READ|EV_WRITE);
 		sb->eof = 1;
 		/* stream will no longer block as all data is read. */
