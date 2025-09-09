@@ -263,7 +263,7 @@ h3_end_headers(nghttp3_conn *conn, int64_t sid, int fin, void *arg, void *sarg)
 		return (-1);
 	if (desc->http_path == NULL)
 		return (-1);
-	if ((desc->http_version = strdup("HTTP/3")) == NULL)
+	if ((desc->http_version = strdup("HTTP/3")) == NULL) // XXX
 		return (-1);
 
 	server_response_http3(clt);
@@ -958,7 +958,7 @@ server_response3(struct httpd *httpd, struct client *clt)
 
 	/* Now fill in the mandatory parts of the response descriptor */
 	resp->http_method = desc->http_method;
-	if ((resp->http_version = strdup(desc->http_version)) == NULL)
+	if ((resp->http_version = strdup(desc->http_version)) == NULL) // XXX
 		goto fail;
 
 	/* Now search for the location */
