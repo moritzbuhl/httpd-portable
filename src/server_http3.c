@@ -1065,6 +1065,18 @@ server_response_http3_stream(struct evbuffer *buf, size_t old, size_t now,
 	server_response_http3(clt);
 }
 
+/*
+ * Changes required for peeloff:
+ * 1. sending should initially be file-read triggered.
+ *     * each complete read should call nghttp3 and generate a packet.
+ *     * then the packet is imediately committed to the socket.
+ * 2. should the socket block and the file buffer fill up, i.e., short write
+ *    or ENOSPC, then we need to poll the socket until it is ready again.
+ *    (by switching the event for the socket)
+ * 3. should the read complete while we are blocked, we need to trigger
+ *    writes with a socket poll event for write.
+ */
+
 void 
 server_response_http3(struct client *clt)
 {
