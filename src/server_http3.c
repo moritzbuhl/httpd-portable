@@ -538,8 +538,6 @@ server_http3_send(struct client *clt, struct iovec *iov, unsigned int nvs,
 void
 server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
 {
-	union quic_event qev;
-
 	if(len < 1)
 		server_close(clt, "empty quic event");
 
@@ -569,7 +567,7 @@ server_http3_quic_event(struct client *clt, char *buf, size_t len, int64_t sid)
 		break;
 	case QUIC_EVENT_CONNECTION_CLOSE:
 		struct quic_connection_close qcc;
-		char *phrase = &buf[1 + sizeof(qcc)];
+		/* char *phrase = &buf[1 + sizeof(qcc)]; */
 		if(len < 1 + sizeof(qcc))
 			server_close(clt, "malformed connection close event");
 		memcpy(&qcc, &buf[1], sizeof(qcc));
@@ -676,7 +674,7 @@ server_abort_http3(struct client *clt, unsigned int code, const char *msg)
 	struct server_config		*srv_conf = clt->clt_srv_conf;
 	struct http_descriptor		*resp = clt->clt_descresp;
 	const char			*httperr = NULL, *style;
-	char				*httpmsg, *body = NULL;
+	char				*body = NULL;
 	char				 tmbuf[32], hbuf[128];
 	char				 buf[IBUF_READ_SIZE];
 	char				*escapedmsg = NULL;
