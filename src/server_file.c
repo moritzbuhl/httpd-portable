@@ -734,7 +734,6 @@ server_file_error3(struct bufferevent *bev, short error, void *arg)
 {
 	struct h3_stream_evbuf	*sb = arg;
 	struct client		*clt = sb->clt;
-	struct evbuffer		*src, *dst;
 
 	log_debug("%s: error=%hd", __func__, error);
 	if (error & EVBUFFER_TIMEOUT) {
