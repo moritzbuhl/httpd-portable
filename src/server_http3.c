@@ -49,9 +49,6 @@
 #include "patterns.h"
 
 void		 server_http3conn_free(struct client *);
-void		 server_abort_http3(struct client *, unsigned int,
-		    const char *);
-void		 server_close_http3(struct client *);
 int		 server_response3(struct httpd *, struct client *);
 int		 server_http_authenticate(struct server_config *,
 		    struct client *);

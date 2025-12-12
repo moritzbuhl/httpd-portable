@@ -747,6 +747,8 @@ int	 server_writeheader_http3(struct client *clt, struct kv *, void *);
 void	 server_response_http3(struct client *);
 void	 server_response_http3_stream(struct evbuffer *, size_t, size_t,
 	    void *);
+void	 server_close_http3(struct client *);
+void	 server_abort_http3(struct client *, unsigned int, const char *);
 
 /* server_file.c */
 int	 server_file(struct httpd *, struct client *);
