@@ -38,8 +38,6 @@ gnutls_session_t quic_server_session_init(int s, gnutls_certificate_credentials_
 					  const char *alpns)
 {
 	gnutls_session_t session;
-	size_t alpn_len;
-	char alpn[64];
 	int ret;
 
 	ret = gnutls_init(&session, GNUTLS_SERVER | GNUTLS_NO_AUTO_SEND_TICKET);
