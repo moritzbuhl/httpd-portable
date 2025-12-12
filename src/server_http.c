@@ -1605,6 +1605,10 @@ server_response_http(struct client *clt, unsigned int code,
 		} else if (kv_add(&resp->http_headers, "Connection",
 		    "close") == NULL)
 			return (-1);
+		/* XXX: alt-svc hack */
+		if (kv_add(&resp->http_headers, "Alt-Svc",
+		    "h3=\":443\"; ma=2592000") == NULL)
+			return (-1);
 	}
 
 	/* Set media type */
