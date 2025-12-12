@@ -73,7 +73,7 @@ static void
 h3_dyn_nva_reset(struct h3_dyn_nva *dnva)
 {
 	struct nghttp3_nv *nv;
-	int i;
+	size_t i;
 
 	for (i = 0; i < dnva->nvlen; i++) {
 		nv = &(dnva->nva[i]);
