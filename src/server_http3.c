@@ -332,7 +332,6 @@ static int
 h3_end_stream(nghttp3_conn *conn, int64_t sid, void *arg, void *sarg)
 {
 	struct client			*clt = arg;
-	struct http_descriptor		*resp = clt->clt_descresp;
 	struct evbuffer			*eb;
 	struct nghttp3_data_reader	 dr;
 
