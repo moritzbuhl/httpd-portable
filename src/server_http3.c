@@ -48,15 +48,17 @@
 #include "http.h"
 #include "patterns.h"
 
-void		 server_http3conn_free(struct client *);
-int		 server_response3(struct httpd *, struct client *);
-int		 server_http_authenticate(struct server_config *,
-		    struct client *);
-void		 server_read_http3range(struct bufferevent *, void *);
-int		 server_writeheader_http3(struct client *, struct kv *,
-		    void *);
-char		*server_expand_http(struct client *, const char *,
-		    char *, size_t);
+void	 server_http3conn_free(struct client *);
+int	 server_response3(struct httpd *, struct client *);
+int	 server_http_authenticate(struct server_config *, struct client *);
+void	 server_read_http3range(struct bufferevent *, void *);
+int	 server_writeheader_http3(struct client *, struct kv *, void *);
+char	*server_expand_http(struct client *, const char *, char *, size_t);
+ssize_t	 server_http3_recv(struct client *, char *, size_t, int64_t *,
+	    uint32_t *);
+ssize_t	 server_http3_send(struct client *, struct iovec *, unsigned int,
+	    int64_t, int);
+void	 server_http3_quic_event(struct client *, char *, size_t, int64_t);
 
 static int
 h3_dyn_nva_init(struct h3_dyn_nva *dnva)
